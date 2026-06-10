@@ -1,0 +1,6 @@
+  CHECK               STATUS    MESSAGE          
+-------------------+--------+------------------
+  config              ok                         
+  current-context     ok                         
+  credential-store    ok        plain-yaml       
+  known-hosts         ok        not initialized  

@@ -1,0 +1,11 @@
+[
+  {
+    "name": "dev",
+    "server": "ssh://alice@example.com:22",
+    "host": "example.com",
+    "port": 22,
+    "username": "alice",
+    "protected": false,
+    "current": true
+  }
+]

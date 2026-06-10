@@ -1,0 +1,19 @@
+{
+  "files": [
+    {
+      "path": "testdata/missing-audit.log",
+      "total": 0,
+      "valid": 0,
+      "malformed": 0
+    }
+  ],
+  "total": 0,
+  "valid": 0,
+  "malformed": 0,
+  "schemaErrors": 0,
+  "timestampOrderViolations": 0,
+  "lock": {
+    "path": "testdata/missing-audit.log.lock",
+    "present": false
+  }
+}

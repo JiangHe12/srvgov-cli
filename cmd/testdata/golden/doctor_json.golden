@@ -1,0 +1,22 @@
+{
+  "checks": [
+    {
+      "name": "config",
+      "status": "ok"
+    },
+    {
+      "name": "current-context",
+      "status": "ok"
+    },
+    {
+      "name": "credential-store",
+      "status": "ok",
+      "message": "plain-yaml"
+    },
+    {
+      "name": "known-hosts",
+      "status": "ok",
+      "message": "not initialized"
+    }
+  ]
+}

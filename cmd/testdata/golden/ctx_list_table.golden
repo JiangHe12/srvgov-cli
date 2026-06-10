@@ -1,0 +1,3 @@
+  NAME    HOST           PORT    USERNAME    ENV    CURRENT  
+-------+-------------+------+----------+-----+----------
+  dev     example.com    22      alice              true     

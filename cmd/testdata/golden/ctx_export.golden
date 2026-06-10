@@ -1,0 +1,16 @@
+apiVersion: srvgov.io/ctx-export/v1
+name: dev
+context:
+    server: ssh://alice@example.com:22
+    username: alice
+    credentialBackend: plain-yaml
+    otlpEndpointSource: auto
+    otlpMetricsSource: auto
+    otlpRedact: true
+    backupKeep: 0
+    host: example.com
+    port: 22
+    authMethods:
+        - private-key
+        - agent
+        - password

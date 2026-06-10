@@ -1,0 +1,9 @@
+{
+  "context": "dev",
+  "host": "example.com:22",
+  "command": "pwd",
+  "riskTier": "R0",
+  "effectiveRiskTier": "R0",
+  "requiredAuthorization": [],
+  "dryRun": true
+}

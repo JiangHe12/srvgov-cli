@@ -1,0 +1,7 @@
+Context	dev
+Host	example.com:22
+Command	pwd
+Risk Tier	R0
+Effective Risk Tier	R0
+Required Authorization	
+Dry Run	true

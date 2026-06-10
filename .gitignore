@@ -1,0 +1,26 @@
+# Build artifacts
+/srvgov
+/srvgov.exe
+*.test
+*.test.exe
+dist/
+bin/*
+!bin/srvgov-cli.js
+
+# Dependencies
+node_modules/
+vendor/
+
+# Local config (may contain credentials)
+.srvgov/
+
+# Editor / agent
+.claude/
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,47 @@
+{
+  "tool": {
+    "name": "srvgov",
+    "version": "dev"
+  },
+  "supported": {
+    "contextApiVersion": "srvgov.io/context/v1",
+    "auditApiVersion": "srvgov.io/audit/v1",
+    "riskModel": [
+      {
+        "level": "R0",
+        "authorization": "free"
+      },
+      {
+        "level": "R1",
+        "authorization": "--reason plus --yes or interactive confirmation"
+      },
+      {
+        "level": "R2",
+        "authorization": "--reason plus --yes plus --ticket"
+      },
+      {
+        "level": "R3",
+        "authorization": "--reason plus --yes plus --ticket plus --allow-destructive"
+      }
+    ],
+    "allowFlags": [
+      "--allow-destructive"
+    ],
+    "governance": {
+      "audit": "append-only JSONL with optional age encryption",
+      "rbac": "opt-in roles reader/writer/admin",
+      "dryRun": true,
+      "tofu": "strict SSH host-key fingerprint pinning",
+      "redaction": "command, stdout, stderr, and audit fields are redacted"
+    },
+    "commands": [
+      "ctx",
+      "exec",
+      "audit",
+      "doctor",
+      "version",
+      "capabilities",
+      "install"
+    ]
+  }
+}
