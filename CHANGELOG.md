@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## v0.1.1
+
+### Fixed
+
+- Force LF line endings for Go and release text files so Windows lint checkout
+  does not turn gofmt-clean files into CRLF-formatted files.
+
 ## v0.1.0
 
 _First public release._
