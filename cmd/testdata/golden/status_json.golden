@@ -1,0 +1,28 @@
+{
+  "hostname": "web-01",
+  "uptime": 123.5,
+  "load": {
+    "1": 0.1,
+    "5": 0.2,
+    "15": 0.3
+  },
+  "cpu": {
+    "model": "Example CPU",
+    "cores": 1
+  },
+  "mem": {
+    "total": 1024000,
+    "used": 614400,
+    "free": 409600
+  },
+  "disk": [
+    {
+      "mount": "/",
+      "size": 1024000,
+      "used": 614400,
+      "avail": 409600,
+      "usePct": 60
+    }
+  ],
+  "kernel": "Linux 6.8.0 x86_64"
+}

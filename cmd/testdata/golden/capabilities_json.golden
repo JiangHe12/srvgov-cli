@@ -37,6 +37,9 @@
     "commands": [
       "ctx",
       "exec",
+      "status",
+      "ports",
+      "logs",
       "audit",
       "doctor",
       "version",

@@ -67,6 +67,23 @@ plain-yaml contexts and must not be used unless the human operator asks for it.
 Passwords and private-key passphrases may be stored through the configured
 credential backend. Do not place credentials in command text.
 
+## Observe Before Acting
+
+Prefer structured observation before constructing an action:
+
+```bash
+srvgov status -o json
+srvgov ports -o json
+srvgov logs --unit nginx --since "30 minutes ago" --priority warning --lines 100 -o json
+srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o json
+```
+
+These commands use the same authoritative cmdclass and authorization path as
+`exec`, audit R0 reads, never add `sudo`, and redact structured fields. Treat
+missing PID/process fields as a permission-limited observation, not permission
+to retry with privilege escalation. Use returned status, ports, and logs as the
+observe step in observe→act→verify.
+
 ## Preview Before Execution
 
 Always preview a command whose impact is not already established:

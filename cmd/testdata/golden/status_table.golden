@@ -1,0 +1,12 @@
+Hostname	web-01
+Uptime Seconds	123.5
+Load 1/5/15	0.1 / 0.2 / 0.3
+CPU	Example CPU
+CPU Cores	1
+Memory Total	1024000
+Memory Used	614400
+Memory Free	409600
+Kernel	Linux 6.8.0 x86_64
+  MOUNT    SIZE       USED      AVAIL     USE_PCT
+--------+---------+--------+--------+----------
+  /        1024000    614400    409600    60

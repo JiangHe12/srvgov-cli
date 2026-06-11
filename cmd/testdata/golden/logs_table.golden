@@ -1,0 +1,12 @@
+Backend	tail
+Unit
+File	/var/log/app.log
+Since
+Priority
+Grep
+Requested Lines	2
+Returned Lines	2
+  TIMESTAMP    HOSTNAME    UNIT    PRIORITY    MESSAGE
+------------+----------+------+----------+--------------
+                                               first line
+                                               second line

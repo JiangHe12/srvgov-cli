@@ -35,6 +35,7 @@ var readOnlyCommands = map[string]bool{
 	"id":         true,
 	"journalctl": true,
 	"ls":         true,
+	"netstat":    true,
 	"pgrep":      true,
 	"printf":     true,
 	"ps":         true,
@@ -213,6 +214,11 @@ func classifySegment(words []string) safety.Risk {
 			return safety.R2
 		}
 		return safety.R0
+	case "ss":
+		if ssKillsSockets(words[1:]) {
+			return safety.R3
+		}
+		return safety.R0
 	case "awk", "gawk", "mawk", "perl", "python", "python3", "ruby", "node", "eval", "xargs", "env":
 		return safety.R3
 	case "systemctl":
@@ -242,6 +248,18 @@ func classifySegment(words []string) safety.Risk {
 		return safety.R0
 	}
 	return safety.R2
+}
+
+func ssKillsSockets(args []string) bool {
+	for _, arg := range args {
+		if arg == "--kill" || strings.HasPrefix(arg, "--kill=") {
+			return true
+		}
+		if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.ContainsRune(strings.TrimPrefix(arg, "-"), 'K') {
+			return true
+		}
+	}
+	return false
 }
 
 //nolint:gocyclo // Shell quoting and operator states are deliberately handled in one fail-closed scanner.

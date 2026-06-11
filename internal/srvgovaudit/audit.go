@@ -23,6 +23,9 @@ const (
 	EventTypeContextExport       EventType = "context.export"
 	EventTypeContextImport       EventType = "context.import"
 	EventTypeCredentialMigrate   EventType = "credential.migrate" //nolint:gosec // Event type name, not a credential value.
+	EventTypeStatusObserve       EventType = "status.observe"
+	EventTypePortsObserve        EventType = "ports.observe"
+	EventTypeLogsObserve         EventType = "logs.observe"
 )
 
 const (

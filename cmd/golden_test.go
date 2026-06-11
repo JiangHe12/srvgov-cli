@@ -5,17 +5,40 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/JiangHe12/srvgov-cli/internal/observe"
+	"github.com/JiangHe12/srvgov-cli/internal/sshexec"
 )
 
 func TestCommandGoldenOutputs(t *testing.T) {
 	configPath := prepareExecContext(t, false)
 	t.Setenv("SRVGOV_MASTER_PASSWORD", "golden-master-password")
+	logOptions := observe.LogOptions{File: "/var/log/app.log", Lines: 2}
+	runner := &scriptedSSHRunner{results: map[string]sshexec.Result{
+		"hostname":                      {Stdout: "web-01\n"},
+		"uname -srm":                    {Stdout: "Linux 6.8.0 x86_64\n"},
+		"cat /proc/uptime":              {Stdout: "123.5 10.0\n"},
+		"cat /proc/loadavg":             {Stdout: "0.1 0.2 0.3 1/10 2\n"},
+		"cat /proc/cpuinfo":             {Stdout: "processor: 0\nmodel name: Example CPU\n"},
+		"cat /proc/meminfo":             {Stdout: "MemTotal: 1000 kB\nMemAvailable: 400 kB\n"},
+		"df -Pk":                        {Stdout: "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda 1000 600 400 60% /\n"},
+		"ss -H -lntup":                  {Stdout: "tcp LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*\n"},
+		observe.FileCommand(logOptions): {Stdout: "first line\nsecond line\n"},
+	}}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
 	cases := []struct {
 		name string
 		args []string
 	}{
 		{name: "exec_dry_run_json", args: []string{"-o", "json", "exec", "--dry-run", "pwd"}},
 		{name: "exec_dry_run_table", args: []string{"-o", "table", "exec", "--dry-run", "pwd"}},
+		{name: "status_json", args: []string{"-o", "json", "status"}},
+		{name: "status_table", args: []string{"-o", "table", "status"}},
+		{name: "ports_json", args: []string{"-o", "json", "ports"}},
+		{name: "ports_table", args: []string{"-o", "table", "ports"}},
+		{name: "logs_json", args: []string{"-o", "json", "logs", "--file", logOptions.File, "--lines", "2"}},
+		{name: "logs_table", args: []string{"-o", "table", "logs", "--file", logOptions.File, "--lines", "2"}},
 		{name: "capabilities_json", args: []string{"-o", "json", "capabilities"}},
 		{name: "capabilities_table", args: []string{"-o", "table", "capabilities"}},
 		{name: "ctx_list_json", args: []string{"-o", "json", "ctx", "list"}},
@@ -50,5 +73,9 @@ func TestCommandGoldenOutputs(t *testing.T) {
 }
 
 func normalizeGolden(value string) string {
-	return strings.ReplaceAll(value, "\r\n", "\n")
+	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
+	for index := range lines {
+		lines[index] = strings.TrimRight(lines[index], " \t")
+	}
+	return strings.Join(lines, "\n")
 }

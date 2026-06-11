@@ -23,9 +23,12 @@ checksums by default.
 ```bash
 srvgov ctx set dev --server ssh://alice@example.com:22 --identity-file ~/.ssh/id_ed25519 -o json
 srvgov ctx use dev -o json
+srvgov status -o json
+srvgov ports -o json
+srvgov logs --unit sshd --since "1 hour ago" --lines 50 -o json
 srvgov exec --dry-run "uptime" -o json
 srvgov exec "uptime" -o json
-srvgov audit --limit 20 -o json
+srvgov audit query --limit 20 -o json
 ```
 
 Use `-o json` for automation and AI agents.
@@ -71,6 +74,24 @@ identity-file paths.
 Portable context export uses `srvgov.io/ctx-export/v1`. Literal password and
 SSH identity passphrase values are redacted by default; credstore references are
 preserved. `--include-credentials` is limited to plain-yaml contexts.
+
+## Observe Before Acting
+
+The observation commands turn common read-only SSH output into stable JSON:
+
+```bash
+srvgov status -o json
+srvgov ports -o json
+srvgov logs --unit nginx --since "30 minutes ago" --priority warning --lines 100 -o json
+srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o json
+```
+
+Each underlying remote command is independently classified and authorized
+through the same governance path as `exec`; probes are never joined with shell
+operators. `ports` falls back from `ss` to `netstat`. Unit logs fall back from
+`journalctl` to `systemctl status` when journalctl is unavailable. No command
+adds `sudo`; unavailable PID/process fields remain empty. Log text, process
+names, generated command text, caller output, and audit records are redacted.
 
 ## Governed Execution
 

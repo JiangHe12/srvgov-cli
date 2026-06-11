@@ -7,6 +7,7 @@ import (
 
 	"github.com/JiangHe12/opskit-core/apperrors"
 
+	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/sshexec"
 )
 
@@ -34,16 +35,45 @@ func TestExitCodeContract(t *testing.T) {
 		_, err := executeRoot(t, configPath, "-o", "json", "exec", "pwd")
 		assertAppError(t, err, apperrors.CodeBackendError, 7)
 	})
+
+	t.Run("observation resource not found", func(t *testing.T) {
+		configPath := prepareExecContext(t, false)
+		runner := &scriptedSSHRunner{results: map[string]sshexec.Result{}}
+		for _, probe := range observe.PortProbes() {
+			runner.results[probe.Command] = sshexec.Result{ExitCode: 127, Stderr: "command not found"}
+		}
+		restore := replaceSSHRunner(runner)
+		t.Cleanup(restore)
+		_, err := executeRoot(t, configPath, "-o", "json", "ports")
+		assertAppError(t, err, apperrors.CodeResourceNotFound, 4)
+	})
 }
 
 func TestJSONOutputContract(t *testing.T) {
 	configPath := prepareExecContext(t, false)
+	logOptions := observe.LogOptions{File: "/var/log/app.log", Lines: 2}
+	runner := &scriptedSSHRunner{results: map[string]sshexec.Result{
+		"hostname":                      {Stdout: "web-01\n"},
+		"uname -srm":                    {Stdout: "Linux 6.8.0\n"},
+		"cat /proc/uptime":              {Stdout: "1 1\n"},
+		"cat /proc/loadavg":             {Stdout: "0 0 0 1/1 1\n"},
+		"cat /proc/cpuinfo":             {},
+		"cat /proc/meminfo":             {},
+		"df -Pk":                        {},
+		observe.PortProbes()[0].Command: {Stdout: ""},
+		observe.FileCommand(logOptions): {Stdout: "line\n"},
+	}}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
 	cases := []struct {
 		name      string
 		args      []string
 		wantArray bool
 	}{
 		{name: "exec dry-run object", args: []string{"-o", "json", "exec", "--dry-run", "pwd"}},
+		{name: "status object", args: []string{"-o", "json", "status"}},
+		{name: "ports array", args: []string{"-o", "json", "ports"}, wantArray: true},
+		{name: "logs object", args: []string{"-o", "json", "logs", "--file", logOptions.File, "--lines", "2"}},
 		{name: "capabilities object", args: []string{"-o", "json", "capabilities"}},
 		{name: "ctx list array", args: []string{"-o", "json", "ctx", "list"}, wantArray: true},
 		{name: "ctx role list array", args: []string{"-o", "json", "ctx", "role", "list", "dev"}, wantArray: true},

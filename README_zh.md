@@ -22,9 +22,12 @@ GitHub Releases 提供 Linux、macOS、Windows 的 amd64/arm64 二进制。npm
 ```bash
 srvgov ctx set dev --server ssh://alice@example.com:22 --identity-file ~/.ssh/id_ed25519 -o json
 srvgov ctx use dev -o json
+srvgov status -o json
+srvgov ports -o json
+srvgov logs --unit sshd --since "1 hour ago" --lines 50 -o json
 srvgov exec --dry-run "uptime" -o json
 srvgov exec "uptime" -o json
-srvgov audit --limit 20 -o json
+srvgov audit query --limit 20 -o json
 ```
 
 自动化和 AI agent 始终使用 `-o json`。
@@ -69,6 +72,23 @@ Context 输出不会包含 password、私钥内容、私钥口令或 identity-fi
 可移植 context export 使用 `srvgov.io/ctx-export/v1`。默认脱敏字面量
 password 和 SSH identity passphrase；credstore 引用原样保留。
 `--include-credentials` 仅限 plain-yaml context。
+
+## 动手前先观察
+
+三个可观测命令把常见只读 SSH 输出转换成稳定 JSON:
+
+```bash
+srvgov status -o json
+srvgov ports -o json
+srvgov logs --unit nginx --since "30 minutes ago" --priority warning --lines 100 -o json
+srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o json
+```
+
+每条底层远端命令都独立经过与 `exec` 相同的分类、有效风险、授权、SSH、脱敏和
+审计流程，绝不使用 shell 操作符拼接。`ports` 从 `ss` 降级到 `netstat`；
+unit 日志在 journalctl 不可用时降级到 `systemctl status`。命令不会自动添加
+`sudo`，拿不到 PID/process 时字段留空。日志文本、进程名、构造命令、调用方
+输出和审计记录都会脱敏。
 
 ## 受治理执行
 

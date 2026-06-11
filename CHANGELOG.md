@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## v0.2.0
+
+### Added
+
+- Governed `status` observations with structured hostname, uptime, load, CPU,
+  memory, disk, and kernel fields.
+- Governed `ports` observations with `ss` to `netstat` fallback and structured
+  listening socket fields.
+- Governed `logs` observations for systemd journal or file tails with native
+  filtering, structured metadata, and field-level redaction.
+
+### Security
+
+- Every observation command uses the same cmdclass, effective-risk,
+  authorization, SSH, redaction, and audit flow as `exec`.
+- Free-text observation arguments are shell-quoted; probes are never joined
+  with shell pipelines or command chaining.
+- `ss -K` and `ss --kill` remain destructive R3 operations.
+
 ## v0.1.1
 
 ### Fixed

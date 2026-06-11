@@ -1,0 +1,3 @@
+  PROTO    LOCAL_ADDR    LOCAL_PORT    STATE     PID    PROCESS
+--------+------------+------------+--------+-----+----------
+  tcp      127.0.0.1     8080          LISTEN

@@ -12,7 +12,6 @@ import (
 	coreaudit "github.com/JiangHe12/opskit-core/audit"
 	"github.com/JiangHe12/opskit-core/safety"
 
-	"github.com/JiangHe12/srvgov-cli/internal/cmdclass"
 	"github.com/JiangHe12/srvgov-cli/internal/redact"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
@@ -70,67 +69,24 @@ func runExec(cmd *cobra.Command, f *cliFlags, command, reason string, allow, dry
 	if err != nil {
 		return err
 	}
-	baseRisk := cmdclass.Classify(command)
-	meta := safety.ContextMeta{
-		Name:          contextName,
-		Env:           item.Env,
-		Protected:     item.Protected,
-		TicketPattern: item.TicketPattern,
-		Roles:         item.Roles,
-	}
-	effectiveRisk := safety.EffectiveRisk(baseRisk, meta)
+	risk := classifyGovernedCommand(*item, contextName, command)
 	if dryRun {
-		return printExecDryRun(f, contextName, *item, command, baseRisk, effectiveRisk)
-	}
-	if effectiveRisk >= safety.R1 && strings.TrimSpace(reason) == "" {
-		return apperrors.New(apperrors.CodeUsageError, "--reason is required for R1-R3 commands", nil)
+		return printExecDryRun(f, contextName, *item, command, risk.Base, risk.Effective)
 	}
 
-	requiredAllow := requiredAllowFlags(effectiveRisk)
-	grantedAllow := map[safety.AllowFlag]bool{allowDestructive: allow}
-	operator := resolveOperator(f.Operator)
-	authErr := safety.Authorize(effectiveRisk, safety.Options{
-		Yes:                f.Yes,
-		NonInteractive:     f.NonInteractive,
-		Ticket:             f.Ticket,
-		TicketPattern:      item.TicketPattern,
-		RequiredAllowFlags: requiredAllow,
-		GrantedAllowFlags:  grantedAllow,
-		Stdin:              cmd.InOrStdin(),
-		Stdout:             cmd.OutOrStdout(),
-		Roles:              item.Roles,
-		Operator:           operator,
-	})
-	if authErr != nil {
-		appendExecAudit(*item, contextName, operator, f.Ticket, reason, command, effectiveRisk, srvgovaudit.StatusDenied, 0, "", "", authErr, srvgovaudit.EventTypeAuthorizationDenied)
-		return authErr
-	}
-
-	result, runErr := newSSHRunner().Run(cmd.Context(), contextName, *item, command)
-	if runErr != nil {
-		appendExecAudit(*item, contextName, operator, f.Ticket, reason, command, effectiveRisk, srvgovaudit.StatusFailed, 0, "", "", runErr, srvgovaudit.EventTypeExecRun)
-		return runErr
-	}
+	result, risk, resultErr := runGovernedCommand(cmd, f, *item, contextName, command, reason, allow, srvgovaudit.EventTypeExecRun)
 	view := execResultView{
 		Context:  contextName,
 		Host:     item.Address(),
 		Command:  redact.String(command),
-		RiskTier: riskName(effectiveRisk),
+		RiskTier: riskName(risk.Effective),
 		Stdout:   redact.String(result.Stdout),
 		Stderr:   redact.String(result.Stderr),
 		ExitCode: result.ExitCode,
 	}
-	status := srvgovaudit.StatusSucceeded
-	var resultErr error
-	if result.ExitCode != 0 {
-		status = srvgovaudit.StatusFailed
-		resultErr = apperrors.New(
-			apperrors.CodeBackendError,
-			fmt.Sprintf("remote command exited with status %d", result.ExitCode),
-			nil,
-		)
+	if resultErr != nil && result.ExitCode == 0 {
+		return resultErr
 	}
-	appendExecAudit(*item, contextName, operator, f.Ticket, reason, command, effectiveRisk, status, result.ExitCode, result.Stdout, result.Stderr, resultErr, srvgovaudit.EventTypeExecRun)
 	if err := printExecResult(f, view); err != nil {
 		return err
 	}

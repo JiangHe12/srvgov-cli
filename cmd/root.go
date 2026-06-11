@@ -53,7 +53,18 @@ func newRootCmdWith(f *cliFlags) *cobra.Command {
 	root.PersistentFlags().StringVar(&f.Ticket, "ticket", "", "Change ticket")
 	root.PersistentFlags().BoolVar(&f.Yes, "yes", false, "Confirm an authorized change")
 	root.PersistentFlags().BoolVar(&f.NonInteractive, "non-interactive", false, "Disable interactive authorization prompts")
-	root.AddCommand(newContextCmd(f), newExecCmd(f), newAuditCmd(f), newDoctorCmd(f), newVersionCmd(f), newCapabilitiesCmd(f), newInstallCmd(f))
+	root.AddCommand(
+		newContextCmd(f),
+		newExecCmd(f),
+		newStatusCmd(f),
+		newPortsCmd(f),
+		newLogsCmd(f),
+		newAuditCmd(f),
+		newDoctorCmd(f),
+		newVersionCmd(f),
+		newCapabilitiesCmd(f),
+		newInstallCmd(f),
+	)
 	return root
 }
 
