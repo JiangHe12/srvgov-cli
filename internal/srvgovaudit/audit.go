@@ -32,6 +32,10 @@ const (
 	EventTypeFileStat            EventType = "file.stat"
 	EventTypeFileList            EventType = "file.list"
 	EventTypeFileWrite           EventType = "file.write"
+	EventTypeDockerList          EventType = "docker.list"
+	EventTypeDockerInspect       EventType = "docker.inspect"
+	EventTypeDockerLogs          EventType = "docker.logs"
+	EventTypeDockerAction        EventType = "docker.action"
 )
 
 const (

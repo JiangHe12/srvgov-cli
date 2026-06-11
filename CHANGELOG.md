@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## v0.4.0
+
+### Added
+
+- Governed Docker container list, inspect, and bounded logs with stable,
+  redacted structured output.
+- Fixed-whitelist Docker start, stop, restart, and remove lifecycle actions.
+
+### Security
+
+- Docker risk comes only from cmdclass: reads are R0, lifecycle changes are
+  R2, and run/create/exec/build/copy/import/export/prune-class operations are
+  R3, including grouped forms such as `docker system prune`.
+- Docker identifiers are shell-quoted and never considered when classifying
+  the action, so a container named `run` or `prune` remains a lifecycle R2.
+- Inspect uses a remote fixed-field projection and never requests container
+  environment variables or returns the full inspect document.
+- Leading Docker global options fail closed as R3. The governed Docker verb
+  exposes no run, create, exec, build, copy, or prune operation.
+
 ## v0.3.0
 
 ### Added

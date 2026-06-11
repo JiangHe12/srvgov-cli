@@ -28,6 +28,7 @@ srvgov ports -o json
 srvgov logs --unit sshd --since "1 hour ago" --lines 50 -o json
 srvgov svc status sshd -o json
 srvgov file stat /etc/hosts -o json
+srvgov docker list -o json
 srvgov exec --dry-run "uptime" -o json
 srvgov exec "uptime" -o json
 srvgov audit query --limit 20 -o json
@@ -143,6 +144,34 @@ confirmation remains available. Write output and audit records never contain
 file content; audit stores only the redacted path, byte count, and SHA-256.
 Writes are direct and non-atomic; temporary-file plus rename is not implemented
 in this release. `file` never uses SFTP and never adds `sudo`.
+
+## Docker Governance
+
+Docker reads provide stable, redacted structures:
+
+```bash
+srvgov docker list -o json
+srvgov docker inspect api -o json
+srvgov docker logs api --tail 100 -o json
+```
+
+`docker list`, `inspect`, and `logs` are audited R0 operations. Inspect uses a
+remote fixed-field projection and excludes container environment variables and
+the full inspect document. Logs default to 100 lines and accept `--tail`
+between 1 and 10000.
+
+Lifecycle changes are R2 and require human authorization:
+
+```bash
+srvgov docker restart api \
+  --reason "restart after reviewed deployment" --ticket OPS-123 --yes -o json
+```
+
+The fixed whitelist contains only `ps`/`list`, `inspect`, `logs`, `start`,
+`stop`, `restart`, and `rm`, one container at a time. It never exposes Docker
+run, create, exec, build, copy, compose, or prune. Protected contexts raise
+lifecycle changes to R3 and require human-supplied `--allow-destructive`.
+Container identifiers are shell-quoted.
 
 ## Governed Execution
 

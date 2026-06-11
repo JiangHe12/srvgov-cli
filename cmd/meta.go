@@ -115,6 +115,7 @@ func capabilitiesData() CapabilitiesData {
 				"logs",
 				"svc",
 				"file",
+				"docker",
 				"audit",
 				"doctor",
 				"version",
@@ -147,7 +148,7 @@ func newCapabilitiesCmd(f *cliFlags) *cobra.Command {
 				{"auditApiVersion", data.Supported.AuditAPIVersion},
 				{"authorization", "R1 requires --reason/--yes; R2 adds --ticket; R3 adds --allow-destructive"},
 				{"governance", "audit, RBAC, dry-run, strict TOFU, redaction"},
-				{"commands", "ctx, exec, status, ports, logs, svc, file, audit, doctor, version, capabilities, install"},
+				{"commands", "ctx, exec, status, ports, logs, svc, file, docker, audit, doctor, version, capabilities, install"},
 			}
 			p.Table([]string{"KEY", "VALUE"}, rows)
 			return nil

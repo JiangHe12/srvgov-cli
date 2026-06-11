@@ -1,0 +1,11 @@
+[
+  {
+    "id": "abc",
+    "name": "api",
+    "image": "repo:tag",
+    "state": "running",
+    "status": "Up 2 hours",
+    "ports": "0.0.0.0:8080-\u003e80/tcp",
+    "createdAt": "2026-06-11 10:00:00 +0000 UTC"
+  }
+]

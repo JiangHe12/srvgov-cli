@@ -127,6 +127,31 @@ file content and explicit `--yes` is mandatory; with `--content`, stdin is
 never read. Writes are non-atomic in this release. Audit stores only path,
 bytes written, and SHA-256, never content. The command does not use SFTP.
 
+## Docker Governance
+
+Use structured reads before a container lifecycle change:
+
+```bash
+srvgov docker list -o json
+srvgov docker inspect api -o json
+srvgov docker logs api --tail 100 -o json
+```
+
+These are audited R0 operations. Inspect returns only the fixed safe field
+subset and excludes Env. Logs are bounded to 1-10000 lines and redacted.
+
+Lifecycle operations are fixed to start, stop, restart, and rm:
+
+```bash
+srvgov docker restart api \
+  --reason "restart after reviewed deployment" --ticket OPS-123 --yes -o json
+```
+
+They are R2, or R3 in protected contexts. Never synthesize `--ticket`, `--yes`,
+or `--allow-destructive`. The Docker verb does not expose run, create, exec,
+build, copy, compose, or prune. Use `exec --dry-run` if a human explicitly
+requests an operation outside the fixed Docker surface.
+
 ## Preview Before Execution
 
 Always preview a command whose impact is not already established:

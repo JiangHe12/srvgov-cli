@@ -226,3 +226,64 @@ func TestClassifySystemctlSubcommands(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyDockerSubcommands(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cmd  string
+		want safety.Risk
+	}{
+		{name: "missing action", cmd: "docker", want: safety.R3},
+		{name: "front global option", cmd: "docker --context prod run alpine", want: safety.R3},
+		{name: "front short option", cmd: "docker -H tcp://host ps", want: safety.R3},
+		{name: "ps", cmd: "docker ps --no-trunc", want: safety.R0},
+		{name: "list alias", cmd: "docker ls", want: safety.R0},
+		{name: "inspect", cmd: "docker inspect app", want: safety.R0},
+		{name: "logs", cmd: "docker logs --tail 100 app", want: safety.R0},
+		{name: "container ls", cmd: "docker container ls", want: safety.R0},
+		{name: "image inspect", cmd: "docker image inspect alpine", want: safety.R0},
+		{name: "volume inspect", cmd: "docker volume inspect data", want: safety.R0},
+		{name: "network inspect", cmd: "docker network inspect bridge", want: safety.R0},
+		{name: "start", cmd: "docker start app", want: safety.R2},
+		{name: "stop", cmd: "docker stop app", want: safety.R2},
+		{name: "restart", cmd: "docker restart app", want: safety.R2},
+		{name: "remove", cmd: "docker rm app", want: safety.R2},
+		{name: "container stop", cmd: "docker container stop app", want: safety.R2},
+		{name: "container named run", cmd: "docker stop run", want: safety.R2},
+		{name: "container named prune", cmd: "docker restart prune", want: safety.R2},
+		{name: "run", cmd: "docker run alpine", want: safety.R3},
+		{name: "create", cmd: "docker create alpine", want: safety.R3},
+		{name: "exec", cmd: "docker exec app sh", want: safety.R3},
+		{name: "build", cmd: "docker build .", want: safety.R3},
+		{name: "commit", cmd: "docker commit app image", want: safety.R3},
+		{name: "copy", cmd: "docker cp app:/etc/passwd .", want: safety.R3},
+		{name: "import", cmd: "docker import rootfs.tar", want: safety.R3},
+		{name: "save", cmd: "docker save image", want: safety.R3},
+		{name: "load", cmd: "docker load", want: safety.R3},
+		{name: "export", cmd: "docker export app", want: safety.R3},
+		{name: "prune", cmd: "docker prune", want: safety.R3},
+		{name: "system prune", cmd: "docker system prune", want: safety.R3},
+		{name: "image prune", cmd: "docker image prune", want: safety.R3},
+		{name: "builder prune", cmd: "docker builder prune", want: safety.R3},
+		{name: "compose up", cmd: "docker compose up", want: safety.R3},
+		{name: "compose run", cmd: "docker compose run web sh", want: safety.R3},
+		{name: "compose exec", cmd: "docker compose exec web sh", want: safety.R3},
+		{name: "compose detached", cmd: "docker compose up -d", want: safety.R3},
+		{name: "standalone compose", cmd: "docker-compose up -d", want: safety.R3},
+		{name: "stack deploy", cmd: "docker stack deploy -c x.yml s", want: safety.R3},
+		{name: "mixed case dangerous", cmd: "DoCkEr SyStEm PrUnE", want: safety.R3},
+		{name: "unknown direct action", cmd: "docker mystery app", want: safety.R2},
+		{name: "unknown grouped action", cmd: "docker container mystery app", want: safety.R2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Classify(tt.cmd); got != tt.want {
+				t.Fatalf("Classify(%q) = R%d, want R%d", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}

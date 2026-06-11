@@ -49,52 +49,53 @@ var readOnlyCommands = map[string]bool{
 }
 
 var dangerousCommands = map[string]bool{
-	"bash":         true,
-	"busybox":      true,
-	"chrt":         true,
-	"command":      true,
-	"dash":         true,
-	"dd":           true,
-	"doas":         true,
-	"expect":       true,
-	"fdisk":        true,
-	"firewall-cmd": true,
-	"flock":        true,
-	"halt":         true,
-	"init":         true,
-	"ionice":       true,
-	"iptables":     true,
-	"ksh":          true,
-	"lua":          true,
-	"luajit":       true,
-	"lvremove":     true,
-	"mkfs":         true,
-	"ncat":         true,
-	"nc":           true,
-	"nice":         true,
-	"nohup":        true,
-	"parted":       true,
-	"php":          true,
-	"php-cgi":      true,
-	"pkexec":       true,
-	"poweroff":     true,
-	"reboot":       true,
-	"setsid":       true,
-	"shutdown":     true,
-	"sh":           true,
-	"socat":        true,
-	"stdbuf":       true,
-	"su":           true,
-	"sudo":         true,
-	"taskset":      true,
-	"tclsh":        true,
-	"time":         true,
-	"timeout":      true,
-	"ufw":          true,
-	"watch":        true,
-	"wipefs":       true,
-	"wish":         true,
-	"zsh":          true,
+	"bash":           true,
+	"busybox":        true,
+	"chrt":           true,
+	"command":        true,
+	"dash":           true,
+	"dd":             true,
+	"doas":           true,
+	"docker-compose": true,
+	"expect":         true,
+	"fdisk":          true,
+	"firewall-cmd":   true,
+	"flock":          true,
+	"halt":           true,
+	"init":           true,
+	"ionice":         true,
+	"iptables":       true,
+	"ksh":            true,
+	"lua":            true,
+	"luajit":         true,
+	"lvremove":       true,
+	"mkfs":           true,
+	"ncat":           true,
+	"nc":             true,
+	"nice":           true,
+	"nohup":          true,
+	"parted":         true,
+	"php":            true,
+	"php-cgi":        true,
+	"pkexec":         true,
+	"poweroff":       true,
+	"reboot":         true,
+	"setsid":         true,
+	"shutdown":       true,
+	"sh":             true,
+	"socat":          true,
+	"stdbuf":         true,
+	"su":             true,
+	"sudo":           true,
+	"taskset":        true,
+	"tclsh":          true,
+	"time":           true,
+	"timeout":        true,
+	"ufw":            true,
+	"watch":          true,
+	"wipefs":         true,
+	"wish":           true,
+	"zsh":            true,
 }
 
 var writeCommands = map[string]bool{
@@ -223,6 +224,8 @@ func classifySegment(words []string) safety.Risk {
 		return safety.R3
 	case "systemctl":
 		return classifySystemctl(words)
+	case "docker":
+		return classifyDocker(words)
 	case "ip":
 		if len(words) >= 2 && hasAnyWord(words[1:2], "address", "addr", "link", "route", "rule", "neighbor", "netns") {
 			return safety.R0
@@ -242,6 +245,38 @@ func classifySegment(words []string) safety.Risk {
 		return safety.R2
 	}
 	if readOnlyCommands[command] {
+		return safety.R0
+	}
+	return safety.R2
+}
+
+func classifyDocker(words []string) safety.Risk {
+	if len(words) < 2 || strings.HasPrefix(words[1], "-") {
+		return safety.R3
+	}
+	if hasAnyWord(words[1:2], "compose", "stack") {
+		return safety.R3
+	}
+	actionIndex := 1
+	if hasAnyWord(words[1:2], "container", "image", "volume", "network", "system", "builder") {
+		actionIndex = 2
+	}
+	if len(words) <= actionIndex || strings.HasPrefix(words[actionIndex], "-") {
+		return safety.R3
+	}
+	action := strings.ToLower(words[actionIndex])
+	if hasAnyWord(
+		[]string{action},
+		"run", "create", "exec", "build", "commit", "cp",
+		"import", "save", "load", "export", "prune",
+	) {
+		return safety.R3
+	}
+	if hasAnyWord(
+		[]string{action},
+		"ps", "ls", "images", "inspect", "logs", "version", "info",
+		"stats", "top", "port", "diff", "history", "events",
+	) {
 		return safety.R0
 	}
 	return safety.R2

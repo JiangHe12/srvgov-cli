@@ -1,0 +1,6 @@
+{
+  "container": "api",
+  "action": "restart",
+  "success": true,
+  "exitCode": 0
+}

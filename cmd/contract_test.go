@@ -69,6 +69,14 @@ func TestJSONOutputContract(t *testing.T) {
 		fileListCommand("/tmp/app"): {
 			Stdout: "hello.txt\x00f\x006\x00640\x001710000000.0\x00",
 		},
+		dockerListCommand(): {
+			Stdout: `{"ID":"abc","Names":"api","Image":"repo:tag","State":"running","Status":"Up","Ports":"80/tcp","CreatedAt":"now"}` + "\n",
+		},
+		dockerInspectCommand("api"): {
+			Stdout: `{"id":"abc","name":"/api","image":"repo:tag","state":"running","status":"running","restartPolicy":"no","ports":{},"mounts":[],"createdAt":"now"}`,
+		},
+		dockerLogsCommand("api", defaultDockerLogTail): {Stdout: "ready\n"},
+		dockerActionCommand("restart", "api"):          {},
 	}}
 	restore := replaceSSHRunner(runner)
 	t.Cleanup(restore)
@@ -93,6 +101,16 @@ func TestJSONOutputContract(t *testing.T) {
 			args: []string{
 				"-o", "json", "--non-interactive", "--yes", "--ticket", "OPS-42",
 				"file", "write", "/tmp/app", "--content", "hello", "--reason", "update test file",
+			},
+		},
+		{name: "docker list array", args: []string{"-o", "json", "docker", "list"}, wantArray: true},
+		{name: "docker inspect object", args: []string{"-o", "json", "docker", "inspect", "api"}},
+		{name: "docker logs object", args: []string{"-o", "json", "docker", "logs", "api"}},
+		{
+			name: "docker action object",
+			args: []string{
+				"-o", "json", "--non-interactive", "--yes", "--ticket", "OPS-42",
+				"docker", "restart", "api", "--reason", "restart test container",
 			},
 		},
 		{name: "capabilities object", args: []string{"-o", "json", "capabilities"}},

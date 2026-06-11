@@ -36,6 +36,16 @@ func TestCommandGoldenOutputs(t *testing.T) {
 		fileListCommand("/tmp"): {
 			Stdout: "app.txt\x00f\x006\x00640\x001710000000.0\x00logs\x00d\x000\x00755\x001710000001.0\x00",
 		},
+		dockerListCommand(): {
+			Stdout: `{"ID":"abc","Names":"api","Image":"repo:tag","State":"running","Status":"Up 2 hours","Ports":"0.0.0.0:8080->80/tcp","CreatedAt":"2026-06-11 10:00:00 +0000 UTC"}` + "\n",
+		},
+		dockerInspectCommand("api"): {
+			Stdout: `{"id":"abc","name":"/api","image":"repo:tag","state":"running","status":"running","restartPolicy":"unless-stopped","ports":{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]},"mounts":[{"Type":"bind","Source":"/srv/api","Destination":"/app","Mode":"ro","RW":false}],"createdAt":"2026-06-11T10:00:00Z"}`,
+		},
+		dockerLogsCommand("api", defaultDockerLogTail): {
+			Stdout: "ready\nserving\n",
+		},
+		dockerActionCommand("restart", "api"): {},
 	}}
 	restore := replaceSSHRunner(runner)
 	t.Cleanup(restore)
@@ -74,6 +84,26 @@ func TestCommandGoldenOutputs(t *testing.T) {
 			args: []string{
 				"-o", "table", "--non-interactive", "--yes", "--ticket", "OPS-42",
 				"file", "write", "/tmp/app.txt", "--content", "hello\n", "--reason", "update test file",
+			},
+		},
+		{name: "docker_list_json", args: []string{"-o", "json", "docker", "list"}},
+		{name: "docker_list_table", args: []string{"-o", "table", "docker", "list"}},
+		{name: "docker_inspect_json", args: []string{"-o", "json", "docker", "inspect", "api"}},
+		{name: "docker_inspect_table", args: []string{"-o", "table", "docker", "inspect", "api"}},
+		{name: "docker_logs_json", args: []string{"-o", "json", "docker", "logs", "api"}},
+		{name: "docker_logs_table", args: []string{"-o", "table", "docker", "logs", "api"}},
+		{
+			name: "docker_action_json",
+			args: []string{
+				"-o", "json", "--non-interactive", "--yes", "--ticket", "OPS-42",
+				"docker", "restart", "api", "--reason", "restart test container",
+			},
+		},
+		{
+			name: "docker_action_table",
+			args: []string{
+				"-o", "table", "--non-interactive", "--yes", "--ticket", "OPS-42",
+				"docker", "restart", "api", "--reason", "restart test container",
 			},
 		},
 		{name: "capabilities_json", args: []string{"-o", "json", "capabilities"}},

@@ -27,6 +27,7 @@ srvgov ports -o json
 srvgov logs --unit sshd --since "1 hour ago" --lines 50 -o json
 srvgov svc status sshd -o json
 srvgov file stat /etc/hosts -o json
+srvgov docker list -o json
 srvgov exec --dry-run "uptime" -o json
 srvgov exec "uptime" -o json
 srvgov audit query --limit 20 -o json
@@ -136,6 +137,32 @@ srvgov file write /tmp/app.conf --content "enabled=true" \
 提供 `--content` 后绝不读取 stdin，仍可正常使用交互确认。写入输出和审计都不会
 包含文件内容；审计只记录脱敏路径、字节数和 SHA-256。本版本使用直接、非原子
 覆盖，不实现临时文件加 rename。`file` 不使用 SFTP，也不会自动添加 `sudo`。
+
+## Docker 治理
+
+Docker 读取提供稳定且脱敏的结构化输出：
+
+```bash
+srvgov docker list -o json
+srvgov docker inspect api -o json
+srvgov docker logs api --tail 100 -o json
+```
+
+`docker list`、`inspect`、`logs` 都是审计的 R0 操作。inspect 在远端只投影
+固定安全字段，不请求容器环境变量，也不返回完整 inspect 文档。logs 默认 100
+行，`--tail` 允许 1 到 10000。
+
+生命周期变更为 R2，需要人类授权：
+
+```bash
+srvgov docker restart api \
+  --reason "restart after reviewed deployment" --ticket OPS-123 --yes -o json
+```
+
+固定白名单仅包含 `ps`/`list`、`inspect`、`logs`、`start`、`stop`、
+`restart` 和 `rm`，每次一个容器。绝不暴露 Docker run、create、exec、
+build、copy、compose 或 prune。protected context 会把生命周期动作升到
+R3，并要求人提供 `--allow-destructive`。容器标识始终 shell 引用。
 
 ## 受治理执行
 
