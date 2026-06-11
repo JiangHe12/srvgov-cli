@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## v0.5.0
+
+### Added
+
+- Bounded, continue-on-error fanout for `status`, `ports`, and `exec` across
+  comma-separated context names with deterministic target-sorted results.
+- Stable per-target JSON results and aggregate success/failure summaries.
+
+### Security
+
+- Fanout is limited to commands whose effective risk is R0 for every target.
+  The entire operation is rejected before SSH if any target exceeds R0.
+- Every target reuses the existing classify, authorize, SSH, redaction, and
+  audit path; no multi-target authorization or write fanout exists in v1.
+- Target names are normalized, deduplicated, sorted, and resolved before work
+  starts. `--targets` and `--context` are mutually exclusive.
+
 ## v0.4.0
 
 ### Added

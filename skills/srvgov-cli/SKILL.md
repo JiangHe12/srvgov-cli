@@ -84,6 +84,22 @@ missing PID/process fields as a permission-limited observation, not permission
 to retry with privilege escalation. Use returned status, ports, and logs as the
 observe step in observe→act→verify.
 
+### Read-only fleet fanout
+
+Use `--targets` only for read-only observation across named contexts:
+
+```bash
+srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
+srvgov ports --targets web-a,web-b,web-c -o json
+srvgov exec --targets web-a,web-b,web-c "uptime" -o json
+```
+
+Fanout has a hard effective-risk ceiling of R0. If any target classifies above
+R0, srvgov rejects the entire operation before SSH. Never attempt to bypass
+this with tickets, allow flags, shell chaining, or repeated writes. Results are
+target-sorted, failures are isolated, and each target is audited separately.
+`--targets` and `--context` cannot be combined.
+
 ## Service Control
 
 Use the fixed `svc` verbs instead of constructing raw systemctl actions:

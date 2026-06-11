@@ -85,6 +85,7 @@ The observation commands turn common read-only SSH output into stable JSON:
 ```bash
 srvgov status -o json
 srvgov ports -o json
+srvgov status --targets web-a,web-b --concurrency 5 -o json
 srvgov logs --unit nginx --since "30 minutes ago" --priority warning --lines 100 -o json
 srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o json
 ```
@@ -95,6 +96,24 @@ operators. `ports` falls back from `ss` to `netstat`. Unit logs fall back from
 `journalctl` to `systemctl status` when journalctl is unavailable. No command
 adds `sudo`; unavailable PID/process fields remain empty. Log text, process
 names, generated command text, caller output, and audit records are redacted.
+
+### Read-only fleet fanout
+
+`status`, `ports`, and `exec` accept comma-separated context names:
+
+```bash
+srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
+srvgov ports --targets web-a,web-b,web-c -o json
+srvgov exec --targets web-a,web-b,web-c "uptime" -o json
+```
+
+Fanout is deliberately R0-only in v1. Before any SSH connection, srvgov
+classifies the command and computes effective risk for every target. If any
+target is above R0, the entire fanout is rejected; there is no multi-target
+ticket or allow flow. Targets are deduplicated and sorted, each target is
+audited independently, and one failed host does not stop the others. Any
+per-target failure returns exit code 7 after emitting the complete result.
+`--targets` and `--context` are mutually exclusive.
 
 ## Service Control
 

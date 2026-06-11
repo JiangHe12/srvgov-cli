@@ -10,46 +10,50 @@ import (
 
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
+	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
 
 func newPortsCmd(f *cliFlags) *cobra.Command {
-	return &cobra.Command{
+	flags := fanoutFlags{Concurrency: defaultFanoutConcurrency}
+	command := &cobra.Command{
 		Use:   "ports",
 		Short: "Show structured listening ports",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runPorts(cmd, f)
+			return runPorts(cmd, f, flags)
 		},
 	}
+	bindFanoutFlags(command, &flags)
+	return command
 }
 
-func runPorts(cmd *cobra.Command, f *cliFlags) error {
-	item, contextName, err := loadSelectedContext(f.Context)
-	if err != nil {
-		return err
-	}
+func runPorts(cmd *cobra.Command, f *cliFlags, flags fanoutFlags) error {
+	return runReadOnlyObservation(cmd, f, flags, observe.PortProbes(), runPortsForTarget, printPorts)
+}
+
+func runPortsForTarget(cmd *cobra.Command, f *cliFlags, item srvgovctx.Context, contextName string) ([]observe.Port, error) {
 	probes := observe.PortProbes()
 	for index, probe := range probes {
-		result, _, runErr := runGovernedCommand(cmd, f, *item, contextName, probe.Command, "", false, srvgovaudit.EventTypePortsObserve)
+		result, _, runErr := runGovernedCommand(cmd, f, item, contextName, probe.Command, "", false, srvgovaudit.EventTypePortsObserve)
 		if runErr != nil {
 			if commandUnavailable(result) {
 				continue
 			}
-			return runErr
+			return nil, runErr
 		}
 		ports, parseErr := observe.ParsePorts(probe.Name, result.Stdout)
 		if parseErr != nil {
-			return parseErr
+			return nil, parseErr
 		}
 		if len(ports) == 0 && strings.TrimSpace(result.Stdout) != "" {
 			if index+1 < len(probes) {
 				continue
 			}
-			return apperrors.New(apperrors.CodeValidationFailed, "unable to parse ss or netstat output", nil)
+			return nil, apperrors.New(apperrors.CodeValidationFailed, "unable to parse ss or netstat output", nil)
 		}
-		return printPorts(f, ports)
+		return ports, nil
 	}
-	return apperrors.New(apperrors.CodeResourceNotFound, "neither ss nor netstat is available", nil)
+	return nil, apperrors.New(apperrors.CodeResourceNotFound, "neither ss nor netstat is available", nil)
 }
 
 func printPorts(f *cliFlags, ports []observe.Port) error {

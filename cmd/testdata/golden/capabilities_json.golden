@@ -32,7 +32,8 @@
       "rbac": "opt-in roles reader/writer/admin",
       "dryRun": true,
       "tofu": "strict SSH host-key fingerprint pinning",
-      "redaction": "command, stdout, stderr, and audit fields are redacted"
+      "redaction": "command, stdout, stderr, and audit fields are redacted",
+      "fanout": "status, ports, and exec; effective risk must be R0 for every target"
     },
     "commands": [
       "ctx",

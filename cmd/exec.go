@@ -13,6 +13,7 @@ import (
 	coreaudit "github.com/JiangHe12/opskit-core/audit"
 	"github.com/JiangHe12/opskit-core/safety"
 
+	"github.com/JiangHe12/srvgov-cli/internal/fanout"
 	"github.com/JiangHe12/srvgov-cli/internal/redact"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
@@ -58,21 +59,87 @@ func newExecCmd(f *cliFlags) *cobra.Command {
 	var reason string
 	var allow bool
 	var dryRun bool
+	var targets string
+	var concurrency int
 	command := &cobra.Command{
 		Use:   "exec <command>",
 		Short: "Run one governed remote command",
 		Args:  requireExactArgs("exec"),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runExec(cmd, f, args[0], reason, allow, dryRun)
+			return runExec(cmd, f, args[0], reason, allow, dryRun, targets, concurrency, cmd.Flags().Changed("targets"))
 		},
 	}
 	command.Flags().StringVar(&reason, "reason", "", "Human reason for a governed change")
 	command.Flags().BoolVar(&allow, "allow-destructive", false, "Explicitly allow an authorized R3 command")
 	command.Flags().BoolVar(&dryRun, "dry-run", false, "Classify and show required authorization without connecting")
+	command.Flags().StringVar(&targets, "targets", "", "Comma-separated server context names")
+	command.Flags().IntVar(&concurrency, "concurrency", defaultFanoutConcurrency, "Maximum concurrent targets")
 	return command
 }
 
-func runExec(cmd *cobra.Command, f *cliFlags, command, reason string, allow, dryRun bool) error {
+func runExec(
+	cmd *cobra.Command,
+	f *cliFlags,
+	command, reason string,
+	allow, dryRun bool,
+	rawTargets string,
+	concurrency int,
+	targetsSet bool,
+) error {
+	if targetsSet {
+		targets, err := loadFanoutTargets(rawTargets, cmd.Flags().Changed("context"), concurrency)
+		if err != nil {
+			return err
+		}
+		if err := requireFanoutR0(targets, []string{command}); err != nil {
+			return err
+		}
+		if dryRun {
+			results := make([]fanout.Result, 0, len(targets))
+			for _, target := range targets {
+				risk := classifyGovernedCommand(target.Value, target.Name, command)
+				results = append(results, fanout.Result{
+					Target: target.Name,
+					Host:   target.Host,
+					Data: execDryRunView{
+						Context:               target.Name,
+						Host:                  target.Host,
+						Command:               redact.String(command),
+						RiskTier:              riskName(risk.Base),
+						EffectiveRiskTier:     riskName(risk.Effective),
+						RequiredAuthorization: requiredAuthorization(risk.Effective),
+						DryRun:                true,
+					},
+				})
+			}
+			return printFanout(cmd, f, buildFanoutView(targets, concurrency, results))
+		}
+		results := fanout.Run(cmd.Context(), targets, concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
+			result, risk, resultErr := runGovernedCommand(
+				cmd,
+				f,
+				target.Value,
+				target.Name,
+				command,
+				reason,
+				allow,
+				srvgovaudit.EventTypeExecRun,
+			)
+			if resultErr != nil {
+				return nil, resultErr
+			}
+			return execResultView{
+				Context:  target.Name,
+				Host:     target.Host,
+				Command:  redact.String(command),
+				RiskTier: riskName(risk.Effective),
+				Stdout:   redact.String(result.Stdout),
+				Stderr:   redact.String(result.Stderr),
+				ExitCode: result.ExitCode,
+			}, nil
+		})
+		return printFanout(cmd, f, buildFanoutView(targets, concurrency, results))
+	}
 	item, contextName, err := loadSelectedContext(f.Context)
 	if err != nil {
 		return err

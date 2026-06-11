@@ -85,6 +85,7 @@ type CapGovernance struct {
 	DryRun    bool   `json:"dryRun"`
 	TOFU      string `json:"tofu"`
 	Redaction string `json:"redaction"`
+	Fanout    string `json:"fanout"`
 }
 
 func capabilitiesData() CapabilitiesData {
@@ -106,6 +107,7 @@ func capabilitiesData() CapabilitiesData {
 				DryRun:    true,
 				TOFU:      "strict SSH host-key fingerprint pinning",
 				Redaction: "command, stdout, stderr, and audit fields are redacted",
+				Fanout:    "status, ports, and exec; effective risk must be R0 for every target",
 			},
 			Commands: []string{
 				"ctx",
@@ -147,7 +149,7 @@ func newCapabilitiesCmd(f *cliFlags) *cobra.Command {
 				{"contextApiVersion", data.Supported.ContextAPIVersion},
 				{"auditApiVersion", data.Supported.AuditAPIVersion},
 				{"authorization", "R1 requires --reason/--yes; R2 adds --ticket; R3 adds --allow-destructive"},
-				{"governance", "audit, RBAC, dry-run, strict TOFU, redaction"},
+				{"governance", "audit, RBAC, dry-run, strict TOFU, redaction, R0-only fanout"},
 				{"commands", "ctx, exec, status, ports, logs, svc, file, docker, audit, doctor, version, capabilities, install"},
 			}
 			p.Table([]string{"KEY", "VALUE"}, rows)

@@ -10,28 +10,32 @@ import (
 
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
+	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
 
 func newStatusCmd(f *cliFlags) *cobra.Command {
-	return &cobra.Command{
+	flags := fanoutFlags{Concurrency: defaultFanoutConcurrency}
+	command := &cobra.Command{
 		Use:   "status",
 		Short: "Show structured read-only server status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runStatus(cmd, f)
+			return runStatus(cmd, f, flags)
 		},
 	}
+	bindFanoutFlags(command, &flags)
+	return command
 }
 
-func runStatus(cmd *cobra.Command, f *cliFlags) error {
-	item, contextName, err := loadSelectedContext(f.Context)
-	if err != nil {
-		return err
-	}
+func runStatus(cmd *cobra.Command, f *cliFlags, flags fanoutFlags) error {
+	return runReadOnlyObservation(cmd, f, flags, observe.StatusProbes(), runStatusForTarget, printStatus)
+}
+
+func runStatusForTarget(cmd *cobra.Command, f *cliFlags, item srvgovctx.Context, contextName string) (observe.Status, error) {
 	values := make(map[string]string)
 	successes := 0
 	for _, probe := range observe.StatusProbes() {
-		result, _, runErr := runGovernedCommand(cmd, f, *item, contextName, probe.Command, "", false, srvgovaudit.EventTypeStatusObserve)
+		result, _, runErr := runGovernedCommand(cmd, f, item, contextName, probe.Command, "", false, srvgovaudit.EventTypeStatusObserve)
 		if runErr == nil {
 			values[probe.Name] = result.Stdout
 			successes++
@@ -40,12 +44,12 @@ func runStatus(cmd *cobra.Command, f *cliFlags) error {
 		if result.ExitCode != 0 {
 			continue
 		}
-		return runErr
+		return observe.Status{}, runErr
 	}
 	if successes == 0 {
-		return apperrors.New(apperrors.CodeResourceNotFound, "no supported server status source is available", nil)
+		return observe.Status{}, apperrors.New(apperrors.CodeResourceNotFound, "no supported server status source is available", nil)
 	}
-	return printStatus(f, observe.ParseStatus(values))
+	return observe.ParseStatus(values), nil
 }
 
 func printStatus(f *cliFlags, value observe.Status) error {

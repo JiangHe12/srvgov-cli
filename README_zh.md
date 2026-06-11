@@ -83,6 +83,7 @@ password 和 SSH identity passphrase；credstore 引用原样保留。
 ```bash
 srvgov status -o json
 srvgov ports -o json
+srvgov status --targets web-a,web-b --concurrency 5 -o json
 srvgov logs --unit nginx --since "30 minutes ago" --priority warning --lines 100 -o json
 srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o json
 ```
@@ -92,6 +93,21 @@ srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o jso
 unit 日志在 journalctl 不可用时降级到 `systemctl status`。命令不会自动添加
 `sudo`，拿不到 PID/process 时字段留空。日志文本、进程名、构造命令、调用方
 输出和审计记录都会脱敏。
+
+### 只读舰队扇出
+
+`status`、`ports`、`exec` 支持逗号分隔的 context 名：
+
+```bash
+srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
+srvgov ports --targets web-a,web-b,web-c -o json
+srvgov exec --targets web-a,web-b,web-c "uptime" -o json
+```
+
+v1 扇出严格限定为 R0。任何 SSH 连接发生前，srvgov 会针对每个目标完成命令
+分类和有效风险计算；只要一个目标高于 R0，整批拒绝，不存在多目标 ticket 或
+allow 授权。目标会去重并排序，每台主机独立审计；单机失败不会中止其余目标，
+但完整结果输出后整体返回退出码 7。`--targets` 与 `--context` 互斥。
 
 ## 服务管控
 
