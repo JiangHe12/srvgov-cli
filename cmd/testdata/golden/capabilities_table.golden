@@ -1,7 +1,7 @@
   KEY                  VALUE
---------------------+--------------------------------------------------------------------------------
+--------------------+-------------------------------------------------------------------------------------------
   contextApiVersion    srvgov.io/context/v1
   auditApiVersion      srvgov.io/audit/v1
   authorization        R1 requires --reason/--yes; R2 adds --ticket; R3 adds --allow-destructive
   governance           audit, RBAC, dry-run, strict TOFU, redaction
-  commands             ctx, exec, status, ports, logs, audit, doctor, version, capabilities, install
+  commands             ctx, exec, status, ports, logs, svc, file, audit, doctor, version, capabilities, install

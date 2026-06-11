@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,6 +27,7 @@ type testSSHServer struct {
 	stdout          string
 	stderr          string
 	exitCode        uint32
+	receivedStdin   string
 	ptyRequested    atomic.Bool
 	stopOnce        sync.Once
 	connectionGroup sync.WaitGroup
@@ -79,6 +81,12 @@ func (s *testSSHServer) authentication() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.lastAuth
+}
+
+func (s *testSSHServer) stdin() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.receivedStdin
 }
 
 func (s *testSSHServer) serve() {
@@ -155,6 +163,12 @@ func (s *testSSHServer) handleSession(channel ssh.Channel, requests <-chan *ssh.
 				return
 			}
 			_ = request.Reply(true, nil)
+			if strings.HasPrefix(payload.Command, "tee ") {
+				input, _ := io.ReadAll(channel)
+				s.mu.Lock()
+				s.receivedStdin = string(input)
+				s.mu.Unlock()
+			}
 			_, _ = io.WriteString(channel, s.stdout)
 			_, _ = io.WriteString(channel.Stderr(), s.stderr)
 			status := make([]byte, 4)

@@ -26,6 +26,12 @@ const (
 	EventTypeStatusObserve       EventType = "status.observe"
 	EventTypePortsObserve        EventType = "ports.observe"
 	EventTypeLogsObserve         EventType = "logs.observe"
+	EventTypeSvcStatus           EventType = "svc.status"
+	EventTypeSvcAction           EventType = "svc.action"
+	EventTypeFileRead            EventType = "file.read"
+	EventTypeFileStat            EventType = "file.stat"
+	EventTypeFileList            EventType = "file.list"
+	EventTypeFileWrite           EventType = "file.write"
 )
 
 const (
@@ -50,6 +56,7 @@ type Event struct {
 	Stderr    string     `json:"stderr,omitempty"`
 	ExitCode  int        `json:"exitCode"`
 	Error     *ErrorInfo `json:"error,omitempty"`
+	File      *FileInfo  `json:"file,omitempty"`
 }
 
 // Context identifies the governed server context.
@@ -70,6 +77,13 @@ type ErrorInfo struct {
 	Message string `json:"message"`
 }
 
+// FileInfo records file-write metadata without persisting file content.
+type FileInfo struct {
+	Path         string `json:"path"`
+	BytesWritten int64  `json:"bytesWritten"`
+	SHA256       string `json:"sha256"`
+}
+
 // Append redacts sensitive fields and writes through the shared audit engine.
 func Append(path string, event Event, opts coreaudit.Options) error {
 	if event.Timestamp.IsZero() {
@@ -84,6 +98,11 @@ func Sanitize(event Event) Event {
 	event.Command = redact.String(event.Command)
 	event.Stdout = redact.String(event.Stdout)
 	event.Stderr = redact.String(event.Stderr)
+	if event.File != nil {
+		cloned := *event.File
+		cloned.Path = redact.String(cloned.Path)
+		event.File = &cloned
+	}
 	if event.Error != nil {
 		cloned := *event.Error
 		cloned.Message = redact.String(cloned.Message)

@@ -59,6 +59,8 @@ func newRootCmdWith(f *cliFlags) *cobra.Command {
 		newStatusCmd(f),
 		newPortsCmd(f),
 		newLogsCmd(f),
+		newSvcCmd(f),
+		newFileCmd(f),
 		newAuditCmd(f),
 		newDoctorCmd(f),
 		newVersionCmd(f),

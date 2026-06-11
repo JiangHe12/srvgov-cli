@@ -170,6 +170,46 @@ func TestRunDoesNotRequestPTY(t *testing.T) {
 	}
 }
 
+func TestRunWithStdinStreamsInputWithoutCapturingStdout(t *testing.T) {
+	server := newTestSSHServer(t)
+	server.setPassword("login-secret")
+	target := contextForServer(t, server, srvgovctx.Context{
+		Base: corectx.Base{Username: "alice", Password: "login-secret"},
+	})
+
+	result, err := (Client{KnownHostsPath: filepath.Join(t.TempDir(), "known_hosts")}).
+		RunWithStdin(context.Background(), "dev", target, "tee -- '/tmp/file'", strings.NewReader("password=write-secret\n"))
+	if err != nil {
+		t.Fatalf("RunWithStdin() error = %v", err)
+	}
+	if server.stdin() != "password=write-secret\n" {
+		t.Fatalf("server stdin = %q", server.stdin())
+	}
+	if result.Stdout != "" || result.Stderr != "stderr-data" || result.ExitCode != 7 {
+		t.Fatalf("result = %#v", result)
+	}
+	if server.ptyRequested.Load() {
+		t.Fatal("server received pty-req")
+	}
+}
+
+func TestRunStillCapturesOutputWithoutStdin(t *testing.T) {
+	server := newTestSSHServer(t)
+	server.setPassword("login-secret")
+	target := contextForServer(t, server, srvgovctx.Context{
+		Base: corectx.Base{Username: "alice", Password: "login-secret"},
+	})
+
+	result, err := (Client{KnownHostsPath: filepath.Join(t.TempDir(), "known_hosts")}).
+		Run(context.Background(), "dev", target, "ignored")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if server.stdin() != "" || result.Stdout != "stdout-data" || result.Stderr != "stderr-data" || result.ExitCode != 7 {
+		t.Fatalf("stdin = %q; result = %#v", server.stdin(), result)
+	}
+}
+
 func TestAuthenticationChainPrivateKeyThenAgentThenPassword(t *testing.T) {
 	t.Run("private key", func(t *testing.T) {
 		server := newTestSSHServer(t)

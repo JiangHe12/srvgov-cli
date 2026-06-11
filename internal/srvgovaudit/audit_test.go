@@ -32,6 +32,7 @@ func TestAppendRedactsSensitiveFields(t *testing.T) {
 		Stderr:   "secretKey: stderr-secret",
 		ExitCode: 7,
 		Error:    &ErrorInfo{Code: "BACKEND_ERROR", Message: "password=error-secret"},
+		File:     &FileInfo{Path: "/tmp/password=path-secret", BytesWritten: 12, SHA256: "abc"},
 	}
 
 	if err := Append(path, event, coreaudit.Options{}); err != nil {
@@ -42,7 +43,7 @@ func TestAppendRedactsSensitiveFields(t *testing.T) {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
 	raw := string(data)
-	for _, secret := range []string{"hunter2", "stdout-secret", "stderr-secret", "error-secret"} {
+	for _, secret := range []string{"hunter2", "stdout-secret", "stderr-secret", "error-secret", "path-secret"} {
 		if strings.Contains(raw, secret) {
 			t.Fatalf("audit leaked %q:\n%s", secret, raw)
 		}

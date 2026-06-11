@@ -84,6 +84,49 @@ missing PID/process fields as a permission-limited observation, not permission
 to retry with privilege escalation. Use returned status, ports, and logs as the
 observe step in observe→act→verify.
 
+## Service Control
+
+Use the fixed `svc` verbs instead of constructing raw systemctl actions:
+
+```bash
+srvgov svc status nginx -o json
+srvgov svc restart nginx --reason "apply reviewed configuration" --ticket OPS-123 --yes -o json
+```
+
+`svc status` is an audited R0 read. `start`, `stop`, `restart`, `reload`,
+`enable`, and `disable` are classified by cmdclass as R2 and require a
+human-supplied reason, ticket, and confirmation. A protected context raises
+them to R3 and also requires a human-supplied `--allow-destructive`. Never
+synthesize these authorization values. `svc` accepts one literal unit and
+does not expose arbitrary, power, isolate, or mask systemctl subcommands.
+
+## File Operations
+
+Use governed structured reads before changing a file:
+
+```bash
+srvgov file read /etc/hosts --max-bytes 1048576 -o json
+srvgov file stat /etc/hosts -o json
+srvgov file list /var/log -o json
+```
+
+These are audited R0 commands. Returned content and structured fields are
+redacted. Reads are bounded; do not raise `--max-bytes` without a concrete need.
+
+For a human-authorized write:
+
+```bash
+srvgov file write /tmp/app.conf --content "enabled=true" \
+  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
+```
+
+Ordinary writes are R2. Sensitive paths or protected contexts raise them to R3
+and require human-supplied `--allow-destructive`. Never synthesize reason,
+ticket, confirmation, or allow flags. Without `--content`, stdin is streamed as
+file content and explicit `--yes` is mandatory; with `--content`, stdin is
+never read. Writes are non-atomic in this release. Audit stores only path,
+bytes written, and SHA-256, never content. The command does not use SFTP.
+
 ## Preview Before Execution
 
 Always preview a command whose impact is not already established:

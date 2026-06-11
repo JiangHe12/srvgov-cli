@@ -25,6 +25,8 @@ srvgov ctx use dev -o json
 srvgov status -o json
 srvgov ports -o json
 srvgov logs --unit sshd --since "1 hour ago" --lines 50 -o json
+srvgov svc status sshd -o json
+srvgov file stat /etc/hosts -o json
 srvgov exec --dry-run "uptime" -o json
 srvgov exec "uptime" -o json
 srvgov audit query --limit 20 -o json
@@ -89,6 +91,51 @@ srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o jso
 unit 日志在 journalctl 不可用时降级到 `systemctl status`。命令不会自动添加
 `sudo`，拿不到 PID/process 时字段留空。日志文本、进程名、构造命令、调用方
 输出和审计记录都会脱敏。
+
+## 服务管控
+
+`svc` 只暴露固定服务操作白名单。unit 名始终按 shell 字面量处理，每条构造出的
+`systemctl` 命令都经过与 `exec` 相同的分类和授权链。
+
+```bash
+# R0 读取，仍审计
+srvgov svc status nginx -o json
+
+# R2 变更：reason、ticket 和确认必须由人提供
+srvgov svc restart nginx \
+  --reason "apply reviewed configuration" --ticket OPS-123 --yes -o json
+```
+
+可用动作仅为 `status`、`start`、`stop`、`restart`、`reload`、`enable` 和
+`disable`，每次只允许一个 unit。protected context 会把服务变更从 R2 升为
+R3，并额外要求人提供 `--allow-destructive`。`svc` 不暴露电源、isolate、
+mask 或任意 systemctl 子命令。
+
+## 文件操作
+
+文件读取是结构化 R0 操作，并且仍会审计：
+
+```bash
+srvgov file read /etc/hosts --max-bytes 1048576 -o json
+srvgov file stat /etc/hosts -o json
+srvgov file list /var/log -o json
+```
+
+写入使用 `tee -- '<path>'`，内容通过 SSH stdin 流式传输。普通路径为 R2；
+SSH 授权文件、shell dotfile、crontab 等敏感路径为 R3。
+
+```bash
+printf '%s\n' 'enabled=true' | srvgov file write /tmp/app.conf \
+  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
+
+srvgov file write /tmp/app.conf --content "enabled=true" \
+  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
+```
+
+未提供 `--content` 时，stdin 就是文件内容，授权前必须显式给出 `--yes`。
+提供 `--content` 后绝不读取 stdin，仍可正常使用交互确认。写入输出和审计都不会
+包含文件内容；审计只记录脱敏路径、字节数和 SHA-256。本版本使用直接、非原子
+覆盖，不实现临时文件加 rename。`file` 不使用 SFTP，也不会自动添加 `sudo`。
 
 ## 受治理执行
 

@@ -24,9 +24,24 @@ func TestCommandGoldenOutputs(t *testing.T) {
 		"df -Pk":                        {Stdout: "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/sda 1000 600 400 60% /\n"},
 		"ss -H -lntup":                  {Stdout: "tcp LISTEN 0 4096 127.0.0.1:8080 0.0.0.0:*\n"},
 		observe.FileCommand(logOptions): {Stdout: "first line\nsecond line\n"},
+		serviceStatusCommand("nginx"): {
+			Stdout: "LoadState=loaded\nActiveState=active\nSubState=running\nUnitFileState=enabled\nDescription=nginx web server\nMainPID=123\n",
+		},
+		fileReadCommand("/tmp/app.txt", defaultFileReadMaxBytes): {
+			Stdout: "hello\n",
+		},
+		fileStatCommand("/tmp/app.txt"): {
+			Stdout: "regular file\t6\t640\talice\tstaff\t1710000000\n",
+		},
+		fileListCommand("/tmp"): {
+			Stdout: "app.txt\x00f\x006\x00640\x001710000000.0\x00logs\x00d\x000\x00755\x001710000001.0\x00",
+		},
 	}}
 	restore := replaceSSHRunner(runner)
 	t.Cleanup(restore)
+	stdinRunner := &scriptedStdinSSHRunner{}
+	restoreStdin := replaceSSHStdinRunner(stdinRunner)
+	t.Cleanup(restoreStdin)
 	cases := []struct {
 		name string
 		args []string
@@ -39,6 +54,28 @@ func TestCommandGoldenOutputs(t *testing.T) {
 		{name: "ports_table", args: []string{"-o", "table", "ports"}},
 		{name: "logs_json", args: []string{"-o", "json", "logs", "--file", logOptions.File, "--lines", "2"}},
 		{name: "logs_table", args: []string{"-o", "table", "logs", "--file", logOptions.File, "--lines", "2"}},
+		{name: "svc_status_json", args: []string{"-o", "json", "svc", "status", "nginx"}},
+		{name: "svc_status_table", args: []string{"-o", "table", "svc", "status", "nginx"}},
+		{name: "file_read_json", args: []string{"-o", "json", "file", "read", "/tmp/app.txt"}},
+		{name: "file_read_table", args: []string{"-o", "table", "file", "read", "/tmp/app.txt"}},
+		{name: "file_stat_json", args: []string{"-o", "json", "file", "stat", "/tmp/app.txt"}},
+		{name: "file_stat_table", args: []string{"-o", "table", "file", "stat", "/tmp/app.txt"}},
+		{name: "file_list_json", args: []string{"-o", "json", "file", "list", "/tmp"}},
+		{name: "file_list_table", args: []string{"-o", "table", "file", "list", "/tmp"}},
+		{
+			name: "file_write_json",
+			args: []string{
+				"-o", "json", "--non-interactive", "--yes", "--ticket", "OPS-42",
+				"file", "write", "/tmp/app.txt", "--content", "hello\n", "--reason", "update test file",
+			},
+		},
+		{
+			name: "file_write_table",
+			args: []string{
+				"-o", "table", "--non-interactive", "--yes", "--ticket", "OPS-42",
+				"file", "write", "/tmp/app.txt", "--content", "hello\n", "--reason", "update test file",
+			},
+		},
 		{name: "capabilities_json", args: []string{"-o", "json", "capabilities"}},
 		{name: "capabilities_table", args: []string{"-o", "table", "capabilities"}},
 		{name: "ctx_list_json", args: []string{"-o", "json", "ctx", "list"}},

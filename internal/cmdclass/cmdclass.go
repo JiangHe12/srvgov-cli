@@ -222,10 +222,7 @@ func classifySegment(words []string) safety.Risk {
 	case "awk", "gawk", "mawk", "perl", "python", "python3", "ruby", "node", "eval", "xargs", "env":
 		return safety.R3
 	case "systemctl":
-		if len(words) >= 2 && hasAnyWord(words[1:2], "status", "show", "is-active", "is-enabled", "list-units", "list-unit-files") {
-			return safety.R0
-		}
-		return safety.R2
+		return classifySystemctl(words)
 	case "ip":
 		if len(words) >= 2 && hasAnyWord(words[1:2], "address", "addr", "link", "route", "rule", "neighbor", "netns") {
 			return safety.R0
@@ -245,6 +242,28 @@ func classifySegment(words []string) safety.Risk {
 		return safety.R2
 	}
 	if readOnlyCommands[command] {
+		return safety.R0
+	}
+	return safety.R2
+}
+
+func classifySystemctl(words []string) safety.Risk {
+	if len(words) < 2 {
+		return safety.R3
+	}
+	subcommand := strings.ToLower(words[1])
+	if strings.HasPrefix(subcommand, "-") {
+		return safety.R3
+	}
+	if hasAnyWord(
+		[]string{subcommand},
+		"reboot", "poweroff", "halt", "kexec",
+		"suspend", "hibernate", "hybrid-sleep",
+		"emergency", "rescue", "isolate", "switch-root", "mask",
+	) {
+		return safety.R3
+	}
+	if hasAnyWord([]string{subcommand}, "status", "show", "is-active", "is-enabled", "list-units", "list-unit-files") {
 		return safety.R0
 	}
 	return safety.R2

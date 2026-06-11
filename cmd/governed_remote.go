@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -18,6 +19,57 @@ import (
 type governedRisk struct {
 	Base      safety.Risk
 	Effective safety.Risk
+}
+
+func runGovernedCommandWithStdin(
+	cmd *cobra.Command,
+	f *cliFlags,
+	item srvgovctx.Context,
+	contextName, command, reason string,
+	allow bool,
+	stdin io.Reader,
+	fileInfo func() *srvgovaudit.FileInfo,
+) (sshexec.Result, governedRisk, error) {
+	risk := classifyGovernedCommand(item, contextName, command)
+	if risk.Effective >= safety.R1 && strings.TrimSpace(reason) == "" {
+		return sshexec.Result{}, risk, apperrors.New(apperrors.CodeUsageError, "--reason is required for R1-R3 commands", nil)
+	}
+
+	operator := resolveOperator(f.Operator)
+	authErr := safety.Authorize(risk.Effective, safety.Options{
+		Yes:                f.Yes,
+		NonInteractive:     f.NonInteractive,
+		Ticket:             f.Ticket,
+		TicketPattern:      item.TicketPattern,
+		RequiredAllowFlags: requiredAllowFlags(risk.Effective),
+		GrantedAllowFlags:  map[safety.AllowFlag]bool{allowDestructive: allow},
+		Stdin:              cmd.InOrStdin(),
+		Stdout:             cmd.OutOrStdout(),
+		Roles:              item.Roles,
+		Operator:           operator,
+	})
+	if authErr != nil {
+		appendExecAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, srvgovaudit.EventTypeAuthorizationDenied)
+		return sshexec.Result{}, risk, authErr
+	}
+
+	result, runErr := newSSHStdinRunner().RunWithStdin(cmd.Context(), contextName, item, command, stdin)
+	if runErr != nil {
+		appendFileWriteAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, result.Stderr, runErr, fileInfo())
+		return sshexec.Result{}, risk, runErr
+	}
+	if result.ExitCode != 0 {
+		resultErr := apperrors.New(
+			apperrors.CodeBackendError,
+			fmt.Sprintf("remote command exited with status %d", result.ExitCode),
+			nil,
+		)
+		appendFileWriteAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stderr, resultErr, fileInfo())
+		return result, risk, resultErr
+	}
+
+	appendFileWriteAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stderr, nil, fileInfo())
+	return result, risk, nil
 }
 
 func classifyGovernedCommand(item srvgovctx.Context, contextName, command string) governedRisk {

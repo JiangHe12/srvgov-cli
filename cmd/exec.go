@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -24,7 +25,14 @@ type sshRunner interface {
 	Run(context.Context, string, srvgovctx.Context, string) (sshexec.Result, error)
 }
 
-var newSSHRunner = func() sshRunner { return sshexec.Client{} }
+type sshStdinRunner interface {
+	RunWithStdin(context.Context, string, srvgovctx.Context, string, io.Reader) (sshexec.Result, error)
+}
+
+var (
+	newSSHRunner      = func() sshRunner { return sshexec.Client{} }
+	newSSHStdinRunner = func() sshStdinRunner { return sshexec.Client{} }
+)
 
 type execDryRunView struct {
 	Context               string   `json:"context"`
@@ -197,6 +205,49 @@ func appendExecAudit(
 		Stderr:   stderr,
 		ExitCode: exitCode,
 		Error:    errorInfo,
+	}, coreaudit.Options{
+		MaxSizeBytes:         item.AuditMaxSize,
+		EncryptPublicKeyPath: item.AuditEncryptKey,
+	})
+}
+
+func appendFileWriteAudit(
+	item srvgovctx.Context,
+	contextName, operator, ticket, reason, command string,
+	risk safety.Risk,
+	status string,
+	exitCode int,
+	stderr string,
+	eventErr error,
+	fileInfo *srvgovaudit.FileInfo,
+) {
+	path, err := coreaudit.DefaultPath()
+	if err != nil {
+		return
+	}
+	var errorInfo *srvgovaudit.ErrorInfo
+	if eventErr != nil {
+		appErr := apperrors.AsAppError(eventErr)
+		errorInfo = &srvgovaudit.ErrorInfo{Code: string(appErr.Code), Message: appErr.Message}
+	}
+	_ = srvgovaudit.Append(path, srvgovaudit.Event{
+		EventType: srvgovaudit.EventTypeFileWrite,
+		Operator:  operator,
+		Context: srvgovaudit.Context{
+			Name:      contextName,
+			Env:       item.Env,
+			Protected: item.Protected,
+		},
+		Ticket:   ticket,
+		Reason:   reason,
+		Target:   srvgovaudit.Target{Host: item.Address()},
+		Command:  command,
+		RiskTier: riskName(risk),
+		Status:   status,
+		Stderr:   stderr,
+		ExitCode: exitCode,
+		Error:    errorInfo,
+		File:     fileInfo,
 	}, coreaudit.Options{
 		MaxSizeBytes:         item.AuditMaxSize,
 		EncryptPublicKeyPath: item.AuditEncryptKey,

@@ -1,0 +1,6 @@
+{
+  "path": "/tmp/app.txt",
+  "content": "hello\n",
+  "bytes": 6,
+  "truncated": false
+}

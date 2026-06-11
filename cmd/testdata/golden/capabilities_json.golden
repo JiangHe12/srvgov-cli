@@ -40,6 +40,8 @@
       "status",
       "ports",
       "logs",
+      "svc",
+      "file",
       "audit",
       "doctor",
       "version",

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -36,6 +37,29 @@ type Client struct {
 
 // Run connects to target, executes command without a PTY, and captures output.
 func (c Client) Run(ctx context.Context, contextName string, target srvgovctx.Context, command string) (Result, error) {
+	return c.run(ctx, contextName, target, command, nil, true)
+}
+
+// RunWithStdin executes command with streamed stdin and intentionally discards
+// stdout so tee-style write content cannot be echoed into memory or logs.
+func (c Client) RunWithStdin(
+	ctx context.Context,
+	contextName string,
+	target srvgovctx.Context,
+	command string,
+	stdin io.Reader,
+) (Result, error) {
+	return c.run(ctx, contextName, target, command, stdin, false)
+}
+
+func (c Client) run(
+	ctx context.Context,
+	contextName string,
+	target srvgovctx.Context,
+	command string,
+	stdin io.Reader,
+	captureStdout bool,
+) (Result, error) {
 	if err := target.Normalize(); err != nil {
 		return Result{}, err
 	}
@@ -86,8 +110,13 @@ func (c Client) Run(ctx context.Context, contextName string, target srvgovctx.Co
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	session.Stdout = &stdout
+	if captureStdout {
+		session.Stdout = &stdout
+	} else {
+		session.Stdout = io.Discard
+	}
 	session.Stderr = &stderr
+	session.Stdin = stdin
 	runDone := make(chan error, 1)
 	go func() {
 		runDone <- session.Run(command)

@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## v0.3.0
+
+### Added
+
+- Governed `svc status` with machine-readable systemd service state.
+- Fixed-whitelist `svc start`, `stop`, `restart`, `reload`, `enable`, and
+  `disable` actions with structured output.
+- Governed `file read`, `file stat`, and `file list` R0 operations with
+  structured, redacted output and bounded reads.
+- Governed `file write` through SSH stdin with R2 authorization and R3
+  escalation for sensitive paths or protected contexts.
+
+### Security
+
+- Every service and file operation uses the shared command classifier,
+  effective-risk, authorization, SSH, redaction, and audit path; cmdclass is the
+  sole risk source (no SFTP or alternate write path).
+- Service unit names and file paths are shell-quoted; unit names are never
+  interpreted as systemctl subcommands.
+- Destructive systemctl power, sleep, run-level, root-switch, and mask
+  subcommands are classified R3; parser-uncertain leading options fail closed.
+- File content from stdin requires explicit `--yes`; `--content` takes
+  deterministic precedence and never reads stdin.
+- Write audit records contain only redacted path, bytes written, and SHA-256;
+  tee output is discarded and content is never returned or persisted.
+
+### Notes
+
+- File writes use direct `tee` replacement and are not atomic. Temporary-file
+  plus rename semantics are reserved for a future release.
+
 ## v0.2.0
 
 ### Added

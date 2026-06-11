@@ -26,6 +26,8 @@ srvgov ctx use dev -o json
 srvgov status -o json
 srvgov ports -o json
 srvgov logs --unit sshd --since "1 hour ago" --lines 50 -o json
+srvgov svc status sshd -o json
+srvgov file stat /etc/hosts -o json
 srvgov exec --dry-run "uptime" -o json
 srvgov exec "uptime" -o json
 srvgov audit query --limit 20 -o json
@@ -92,6 +94,55 @@ operators. `ports` falls back from `ss` to `netstat`. Unit logs fall back from
 `journalctl` to `systemctl status` when journalctl is unavailable. No command
 adds `sudo`; unavailable PID/process fields remain empty. Log text, process
 names, generated command text, caller output, and audit records are redacted.
+
+## Service Control
+
+`svc` exposes only a fixed service-operation whitelist. Unit names are treated
+as literal shell words, and every generated `systemctl` command goes through
+the same classifier and authorization path as `exec`.
+
+```bash
+# R0 read, still audited
+srvgov svc status nginx -o json
+
+# R2 change: human-supplied reason, ticket, and confirmation
+srvgov svc restart nginx \
+  --reason "apply reviewed configuration" --ticket OPS-123 --yes -o json
+```
+
+Available actions are `status`, `start`, `stop`, `restart`, `reload`, `enable`,
+and `disable`, for one unit at a time. Protected contexts raise service changes
+from R2 to R3 and additionally require human-supplied `--allow-destructive`.
+`svc` does not expose power, isolate, mask, or arbitrary systemctl operations.
+
+## File Operations
+
+File reads are structured R0 operations and remain audited:
+
+```bash
+srvgov file read /etc/hosts --max-bytes 1048576 -o json
+srvgov file stat /etc/hosts -o json
+srvgov file list /var/log -o json
+```
+
+Writes use `tee -- '<path>'` with content streamed over SSH stdin. They are R2
+for ordinary paths and R3 for sensitive paths such as SSH authorization files,
+shell dotfiles, and crontabs.
+
+```bash
+printf '%s\n' 'enabled=true' | srvgov file write /tmp/app.conf \
+  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
+
+srvgov file write /tmp/app.conf --content "enabled=true" \
+  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
+```
+
+Without `--content`, stdin is the file content and explicit `--yes` is required
+before authorization. With `--content`, stdin is never read and interactive
+confirmation remains available. Write output and audit records never contain
+file content; audit stores only the redacted path, byte count, and SHA-256.
+Writes are direct and non-atomic; temporary-file plus rename is not implemented
+in this release. `file` never uses SFTP and never adds `sudo`.
 
 ## Governed Execution
 

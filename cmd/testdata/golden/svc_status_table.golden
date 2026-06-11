@@ -1,0 +1,7 @@
+Unit	nginx
+Load State	loaded
+Active State	active
+Sub State	running
+Unit File State	enabled
+Description	nginx web server
+Main PID	123

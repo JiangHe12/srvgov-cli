@@ -21,6 +21,10 @@ func TestClassify(t *testing.T) {
 		{name: "read only cat", cmd: "cat /var/log/syslog", want: safety.R0},
 		{name: "read only grep", cmd: `grep -n "failed login" /var/log/auth.log`, want: safety.R0},
 		{name: "read only systemctl status", cmd: "systemctl status sshd", want: safety.R0},
+		{name: "read only systemctl show options after subcommand", cmd: "systemctl show nginx --property=ActiveState", want: safety.R0},
+		{name: "read only file head", cmd: "head -c 1025 -- '/tmp/app file'", want: safety.R0},
+		{name: "read only file stat", cmd: "stat -c '%F\t%s\t%a\t%U\t%G\t%Y' -- '/tmp/app file'", want: safety.R0},
+		{name: "read only file list", cmd: "find '/tmp/app dir' -mindepth 1 -maxdepth 1 -printf '%f\\0%y\\0%s\\0%m\\0%T@\\0'", want: safety.R0},
 		{name: "read only ss sockets", cmd: "ss -H -lntup", want: safety.R0},
 		{name: "read only netstat sockets", cmd: "netstat -lntup", want: safety.R0},
 		{name: "benign mkdir", cmd: "mkdir -p /tmp/srvgov-test", want: safety.R1},
@@ -32,6 +36,9 @@ func TestClassify(t *testing.T) {
 		{name: "dangerous dd", cmd: "dd if=/dev/zero of=/dev/sda", want: safety.R3},
 		{name: "dangerous reboot", cmd: "reboot", want: safety.R3},
 		{name: "dangerous shutdown path", cmd: "/sbin/shutdown -h now", want: safety.R3},
+		{name: "systemctl restart is governed change", cmd: "systemctl restart nginx", want: safety.R2},
+		{name: "file write", cmd: "tee -- '/tmp/app file'", want: safety.R2},
+		{name: "file write authorized keys", cmd: "tee -- '~/.ssh/authorized_keys'", want: safety.R3},
 		{name: "dangerous mkfs variant", cmd: "mkfs.ext4 /dev/sdb1", want: safety.R3},
 		{name: "dangerous firewall", cmd: "iptables -F", want: safety.R3},
 		{name: "dangerous ufw", cmd: "ufw disable", want: safety.R3},
@@ -164,6 +171,50 @@ func TestClassifyAdversarial(t *testing.T) {
 		{name: "process substitution", cmd: "cat <(id)", want: safety.R3},
 		{name: "background operator", cmd: "pwd & rm -rf /", want: safety.R3},
 		{name: "unicode whitespace command", cmd: "rm\u00a0-rf\u00a0/", want: safety.R3},
+		{name: "systemctl unit named reboot is not subcommand", cmd: "systemctl restart reboot.service", want: safety.R2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Classify(tt.cmd); got != tt.want {
+				t.Fatalf("Classify(%q) = R%d, want R%d", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestClassifySystemctlSubcommands(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cmd  string
+		want safety.Risk
+	}{
+		{name: "reboot", cmd: "systemctl reboot", want: safety.R3},
+		{name: "poweroff", cmd: "systemctl poweroff", want: safety.R3},
+		{name: "halt", cmd: "systemctl halt", want: safety.R3},
+		{name: "kexec", cmd: "systemctl kexec", want: safety.R3},
+		{name: "suspend", cmd: "systemctl suspend", want: safety.R3},
+		{name: "hibernate", cmd: "systemctl hibernate", want: safety.R3},
+		{name: "hybrid sleep", cmd: "systemctl hybrid-sleep", want: safety.R3},
+		{name: "emergency", cmd: "systemctl emergency", want: safety.R3},
+		{name: "rescue", cmd: "systemctl rescue", want: safety.R3},
+		{name: "isolate", cmd: "systemctl isolate multi-user.target", want: safety.R3},
+		{name: "switch root", cmd: "systemctl switch-root /sysroot", want: safety.R3},
+		{name: "mask", cmd: "systemctl mask nginx", want: safety.R3},
+		{name: "mixed case", cmd: "systemctl ReBoOt", want: safety.R3},
+		{name: "dangerous option after subcommand", cmd: "systemctl reboot --force", want: safety.R3},
+		{name: "front option fail closed", cmd: "systemctl --force reboot", want: safety.R3},
+		{name: "combined front option fail closed", cmd: "systemctl -qf reboot", want: safety.R3},
+		{name: "start", cmd: "systemctl start nginx", want: safety.R2},
+		{name: "stop", cmd: "systemctl stop nginx", want: safety.R2},
+		{name: "restart", cmd: "systemctl restart nginx", want: safety.R2},
+		{name: "reload", cmd: "systemctl reload nginx", want: safety.R2},
+		{name: "enable", cmd: "systemctl enable nginx", want: safety.R2},
+		{name: "disable", cmd: "systemctl disable nginx", want: safety.R2},
+		{name: "unit name is not inspected", cmd: "systemctl restart reboot.service", want: safety.R2},
 	}
 
 	for _, tt := range tests {

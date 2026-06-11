@@ -111,6 +111,11 @@ func TestStringAdversarial(t *testing.T) {
 			mustNotSee: []string{"one", "two", "three"},
 		},
 		{
+			name:       "nested assignment in structured field",
+			input:      "Description=password=service-secret",
+			mustNotSee: []string{"service-secret"},
+		},
+		{
 			name:       "case insensitive assignments",
 			input:      "PASSWORD: Alpha TOKEN : 'Beta' Api_Secret = \"Gamma\"",
 			mustNotSee: []string{"Alpha", "Beta", "Gamma"},

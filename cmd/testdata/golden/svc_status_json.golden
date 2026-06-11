@@ -1,0 +1,9 @@
+{
+  "unit": "nginx",
+  "loadState": "loaded",
+  "activeState": "active",
+  "subState": "running",
+  "unitFileState": "enabled",
+  "description": "nginx web server",
+  "mainPID": 123
+}

@@ -62,9 +62,19 @@ func TestJSONOutputContract(t *testing.T) {
 		"df -Pk":                        {},
 		observe.PortProbes()[0].Command: {Stdout: ""},
 		observe.FileCommand(logOptions): {Stdout: "line\n"},
+		fileReadCommand("/tmp/app", defaultFileReadMaxBytes): {Stdout: "hello\n"},
+		fileStatCommand("/tmp/app"): {
+			Stdout: "regular file\t6\t640\talice\tstaff\t1710000000\n",
+		},
+		fileListCommand("/tmp/app"): {
+			Stdout: "hello.txt\x00f\x006\x00640\x001710000000.0\x00",
+		},
 	}}
 	restore := replaceSSHRunner(runner)
 	t.Cleanup(restore)
+	stdinRunner := &scriptedStdinSSHRunner{}
+	restoreStdin := replaceSSHStdinRunner(stdinRunner)
+	t.Cleanup(restoreStdin)
 	cases := []struct {
 		name      string
 		args      []string
@@ -74,6 +84,17 @@ func TestJSONOutputContract(t *testing.T) {
 		{name: "status object", args: []string{"-o", "json", "status"}},
 		{name: "ports array", args: []string{"-o", "json", "ports"}, wantArray: true},
 		{name: "logs object", args: []string{"-o", "json", "logs", "--file", logOptions.File, "--lines", "2"}},
+		{name: "svc status object", args: []string{"-o", "json", "svc", "status", "nginx"}},
+		{name: "file read object", args: []string{"-o", "json", "file", "read", "/tmp/app"}},
+		{name: "file stat object", args: []string{"-o", "json", "file", "stat", "/tmp/app"}},
+		{name: "file list array", args: []string{"-o", "json", "file", "list", "/tmp/app"}, wantArray: true},
+		{
+			name: "file write object",
+			args: []string{
+				"-o", "json", "--non-interactive", "--yes", "--ticket", "OPS-42",
+				"file", "write", "/tmp/app", "--content", "hello", "--reason", "update test file",
+			},
+		},
 		{name: "capabilities object", args: []string{"-o", "json", "capabilities"}},
 		{name: "ctx list array", args: []string{"-o", "json", "ctx", "list"}, wantArray: true},
 		{name: "ctx role list array", args: []string{"-o", "json", "ctx", "role", "list", "dev"}, wantArray: true},

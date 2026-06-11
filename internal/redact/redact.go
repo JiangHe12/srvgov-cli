@@ -33,7 +33,7 @@ var patterns = []struct {
 }
 
 var assignmentRE = regexp.MustCompile(
-	`(^|[^A-Za-z0-9_.-])([A-Za-z0-9_.-]+)(\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`,
+	`(^|[^A-Za-z0-9_.-])([A-Za-z0-9_.-]+)(\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`,
 )
 
 // String returns value with recognized secrets replaced. It is intentionally
@@ -48,10 +48,13 @@ func String(value string) string {
 
 func redactAssignment(candidate string) string {
 	parts := assignmentRE.FindStringSubmatch(candidate)
-	if len(parts) != 4 || !isSensitiveKey(parts[2]) {
+	if len(parts) != 5 {
 		return candidate
 	}
-	return parts[1] + parts[2] + parts[3] + replacement
+	if isSensitiveKey(parts[2]) {
+		return parts[1] + parts[2] + parts[3] + replacement
+	}
+	return parts[1] + parts[2] + parts[3] + String(parts[4])
 }
 
 func isSensitiveKey(key string) bool {
