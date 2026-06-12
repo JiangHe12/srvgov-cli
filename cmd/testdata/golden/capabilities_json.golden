@@ -33,7 +33,7 @@
       "dryRun": true,
       "tofu": "strict SSH host-key fingerprint pinning",
       "redaction": "command, stdout, stderr, and audit fields are redacted",
-      "fanout": "status, ports, and exec; effective risk must be R0 for every target"
+      "fanout": "status and ports require R0 for every target; exec authorizes every target before any execution"
     },
     "commands": [
       "ctx",

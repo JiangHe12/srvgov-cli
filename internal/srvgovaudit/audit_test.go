@@ -1,10 +1,12 @@
 package srvgovaudit
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -64,5 +66,46 @@ func TestEventTypesAndStatuses(t *testing.T) {
 	}
 	if StatusSucceeded != "succeeded" || StatusFailed != "failed" || StatusDenied != "denied" {
 		t.Fatalf("statuses = %q/%q/%q", StatusSucceeded, StatusFailed, StatusDenied)
+	}
+}
+
+func TestAppendSerializesConcurrentRecordsInProcess(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.log")
+
+	const count = 16
+	start := make(chan struct{})
+	errors := make(chan error, count)
+	var workers sync.WaitGroup
+	workers.Add(count)
+	for index := range count {
+		go func() {
+			defer workers.Done()
+			<-start
+			errors <- Append(path, Event{
+				EventType: EventTypeExecRun,
+				Context:   Context{Name: "target"},
+				Target:    Target{Host: "example.com:22"},
+				Command:   "pwd",
+				RiskTier:  "R0",
+				Status:    StatusSucceeded,
+				ExitCode:  index,
+			}, coreaudit.Options{})
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(errors)
+
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("Append() error = %v", err)
+		}
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if lines := bytes.Count(bytes.TrimSpace(data), []byte("\n")) + 1; lines != count {
+		t.Fatalf("audit lines = %d, want %d", lines, count)
 	}
 }

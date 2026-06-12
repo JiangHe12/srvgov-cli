@@ -3,5 +3,5 @@
   contextApiVersion    srvgov.io/context/v1
   auditApiVersion      srvgov.io/audit/v1
   authorization        R1 requires --reason/--yes; R2 adds --ticket; R3 adds --allow-destructive
-  governance           audit, RBAC, dry-run, strict TOFU, redaction, R0-only fanout
+  governance           audit, RBAC, dry-run, strict TOFU, redaction, authorize-all exec fanout
   commands             ctx, exec, status, ports, logs, svc, file, docker, audit, doctor, version, capabilities, install

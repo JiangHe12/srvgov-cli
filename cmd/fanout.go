@@ -39,10 +39,11 @@ type fanoutResultView struct {
 }
 
 type fanoutView struct {
-	Targets     []string           `json:"targets"`
-	Concurrency int                `json:"concurrency"`
-	Summary     fanoutSummary      `json:"summary"`
-	Results     []fanoutResultView `json:"results"`
+	Targets              []string           `json:"targets"`
+	Concurrency          int                `json:"concurrency"`
+	MaxEffectiveRiskTier string             `json:"maxEffectiveRiskTier,omitempty"`
+	Summary              fanoutSummary      `json:"summary"`
+	Results              []fanoutResultView `json:"results"`
 }
 
 type fanoutFlags struct {

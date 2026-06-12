@@ -97,7 +97,7 @@ operators. `ports` falls back from `ss` to `netstat`. Unit logs fall back from
 adds `sudo`; unavailable PID/process fields remain empty. Log text, process
 names, generated command text, caller output, and audit records are redacted.
 
-### Read-only fleet fanout
+### Fleet fanout
 
 `status`, `ports`, and `exec` accept comma-separated context names:
 
@@ -105,15 +105,22 @@ names, generated command text, caller output, and audit records are redacted.
 srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
 srvgov ports --targets web-a,web-b,web-c -o json
 srvgov exec --targets web-a,web-b,web-c "uptime" -o json
+srvgov exec --targets web-a,web-b,web-c --dry-run "systemctl restart nginx" -o json
+srvgov exec --targets web-a,web-b,web-c "systemctl restart nginx" \
+  --reason "restart reviewed service" --ticket OPS-123 --yes -o json
 ```
 
-Fanout is deliberately R0-only in v1. Before any SSH connection, srvgov
-classifies the command and computes effective risk for every target. If any
-target is above R0, the entire fanout is rejected; there is no multi-target
-ticket or allow flow. Targets are deduplicated and sorted, each target is
-audited independently, and one failed host does not stop the others. Any
-per-target failure returns exit code 7 after emitting the complete result.
-`--targets` and `--context` are mutually exclusive.
+`status` and `ports` remain strictly R0-only. `exec` uses two-phase
+authorize-all: it classifies and non-interactively authorizes every sorted
+target before any SSH execution. If one target rejects the ticket, role,
+confirmation, or required allow flag, the whole batch stops with zero partial
+writes. After all targets pass, execution is concurrent and each target
+re-authorizes immediately before SSH. Dry-run does not authorize or connect;
+it reports each target's real base/effective risk plus
+`maxEffectiveRiskTier`. Targets are deduplicated and sorted, each target is
+audited independently, and one remote execution failure does not stop the
+others. Any per-target execution failure returns exit code 7 after emitting
+the complete result. `--targets` and `--context` are mutually exclusive.
 
 ## Service Control
 

@@ -28,7 +28,7 @@ func TestCapabilitiesReflectSrvGovSurface(t *testing.T) {
 	if !got.Supported.Governance.DryRun || got.Supported.Governance.TOFU == "" || got.Supported.Governance.Redaction == "" {
 		t.Fatalf("governance = %#v", got.Supported.Governance)
 	}
-	if got.Supported.Governance.Fanout != "status, ports, and exec; effective risk must be R0 for every target" {
+	if got.Supported.Governance.Fanout != "status and ports require R0 for every target; exec authorizes every target before any execution" {
 		t.Fatalf("fanout = %q", got.Supported.Governance.Fanout)
 	}
 	for _, command := range []string{"ctx", "exec", "status", "ports", "logs", "svc", "file", "docker", "audit", "doctor", "version", "install"} {

@@ -84,21 +84,26 @@ missing PID/process fields as a permission-limited observation, not permission
 to retry with privilege escalation. Use returned status, ports, and logs as the
 observe step in observe→act→verify.
 
-### Read-only fleet fanout
+### Fleet fanout
 
-Use `--targets` only for read-only observation across named contexts:
+Use `--targets` for governed execution across named contexts:
 
 ```bash
 srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
 srvgov ports --targets web-a,web-b,web-c -o json
 srvgov exec --targets web-a,web-b,web-c "uptime" -o json
+srvgov exec --targets web-a,web-b,web-c --dry-run "systemctl restart nginx" -o json
 ```
 
-Fanout has a hard effective-risk ceiling of R0. If any target classifies above
-R0, srvgov rejects the entire operation before SSH. Never attempt to bypass
-this with tickets, allow flags, shell chaining, or repeated writes. Results are
-target-sorted, failures are isolated, and each target is audited separately.
-`--targets` and `--context` cannot be combined.
+`status` and `ports` have a hard effective-risk ceiling of R0. Multi-target
+`exec` first authorizes every target non-interactively and starts no SSH work
+unless all targets pass. Human-supplied reason, ticket, confirmation, and allow
+flags are reused but validated independently against every context's effective
+risk, ticket pattern, and RBAC. Never synthesize those values. Use dry-run to
+inspect each target's effective risk and `maxEffectiveRiskTier`; dry-run does
+not authorize or connect. Results are target-sorted, remote failures are
+isolated, and each target is audited separately. `--targets` and `--context`
+cannot be combined.
 
 ## Service Control
 

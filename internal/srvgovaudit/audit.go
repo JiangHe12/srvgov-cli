@@ -2,12 +2,15 @@
 package srvgovaudit
 
 import (
+	"sync"
 	"time"
 
 	coreaudit "github.com/JiangHe12/opskit-core/audit"
 
 	"github.com/JiangHe12/srvgov-cli/internal/redact"
 )
+
+var appendMu sync.Mutex
 
 // EventType identifies an srvgov audit event.
 type EventType string
@@ -90,6 +93,9 @@ type FileInfo struct {
 
 // Append redacts sensitive fields and writes through the shared audit engine.
 func Append(path string, event Event, opts coreaudit.Options) error {
+	appendMu.Lock()
+	defer appendMu.Unlock()
+
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
 	}

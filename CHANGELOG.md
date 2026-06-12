@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## v0.6.0
+
+### Added
+
+- Two-phase authorize-all execution for governed `exec --targets` writes.
+- Multi-target dry-run reports each target's base/effective risk and the
+  aggregate maximum effective risk.
+
+### Security
+
+- Every target is classified and non-interactively authorized in sorted order
+  before any SSH execution begins. The first denial rejects the whole batch,
+  writes an `authorization.denied` event for that target, and guarantees zero
+  partial writes.
+- Ticket patterns, RBAC, protected-context escalation, confirmation, and R3
+  allow flags are evaluated independently by `safety.Authorize` for every
+  target. Execution then re-authorizes each target immediately before SSH.
+- Concurrent audit appends are serialized in-process before entering the core
+  cross-process file lock, preventing dropped per-target records on Windows.
+- `status` and `ports` fanout remain strictly R0-only.
+
 ## v0.5.0
 
 ### Added

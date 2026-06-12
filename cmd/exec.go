@@ -55,6 +55,11 @@ type execResultView struct {
 	ExitCode int    `json:"exitCode"`
 }
 
+type execFanoutPlan struct {
+	Target fanout.Target[srvgovctx.Context]
+	Risk   governedRisk
+}
+
 func newExecCmd(f *cliFlags) *cobra.Command {
 	var reason string
 	var allow bool
@@ -91,33 +96,37 @@ func runExec(
 		if err != nil {
 			return err
 		}
-		if err := requireFanoutR0(targets, []string{command}); err != nil {
-			return err
-		}
+		plans, maxEffective := planExecFanout(targets, command)
 		if dryRun {
-			results := make([]fanout.Result, 0, len(targets))
-			for _, target := range targets {
-				risk := classifyGovernedCommand(target.Value, target.Name, command)
+			results := make([]fanout.Result, 0, len(plans))
+			for _, plan := range plans {
 				results = append(results, fanout.Result{
-					Target: target.Name,
-					Host:   target.Host,
+					Target: plan.Target.Name,
+					Host:   plan.Target.Host,
 					Data: execDryRunView{
-						Context:               target.Name,
-						Host:                  target.Host,
+						Context:               plan.Target.Name,
+						Host:                  plan.Target.Host,
 						Command:               redact.String(command),
-						RiskTier:              riskName(risk.Base),
-						EffectiveRiskTier:     riskName(risk.Effective),
-						RequiredAuthorization: requiredAuthorization(risk.Effective),
+						RiskTier:              riskName(plan.Risk.Base),
+						EffectiveRiskTier:     riskName(plan.Risk.Effective),
+						RequiredAuthorization: requiredAuthorization(plan.Risk.Effective),
 						DryRun:                true,
 					},
 				})
 			}
-			return printFanout(cmd, f, buildFanoutView(targets, concurrency, results))
+			view := buildFanoutView(targets, concurrency, results)
+			view.MaxEffectiveRiskTier = riskName(maxEffective)
+			return printFanout(cmd, f, view)
+		}
+		if err := authorizeExecFanout(cmd, f, plans, command, reason, allow, maxEffective); err != nil {
+			return err
 		}
 		results := fanout.Run(cmd.Context(), targets, concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
+			targetFlags := *f
+			targetFlags.NonInteractive = true
 			result, risk, resultErr := runGovernedCommand(
 				cmd,
-				f,
+				&targetFlags,
 				target.Value,
 				target.Name,
 				command,
@@ -167,6 +176,77 @@ func runExec(
 	}
 	if resultErr != nil {
 		return resultErr
+	}
+	return nil
+}
+
+func planExecFanout(targets []fanout.Target[srvgovctx.Context], command string) ([]execFanoutPlan, safety.Risk) {
+	plans := make([]execFanoutPlan, 0, len(targets))
+	maxEffective := safety.R0
+	for _, target := range targets {
+		risk := classifyGovernedCommand(target.Value, target.Name, command)
+		if risk.Effective > maxEffective {
+			maxEffective = risk.Effective
+		}
+		plans = append(plans, execFanoutPlan{Target: target, Risk: risk})
+	}
+	return plans, maxEffective
+}
+
+func authorizeExecFanout(
+	cmd *cobra.Command,
+	f *cliFlags,
+	plans []execFanoutPlan,
+	command, reason string,
+	allow bool,
+	maxEffective safety.Risk,
+) error {
+	if maxEffective >= safety.R1 && strings.TrimSpace(reason) == "" {
+		return apperrors.New(apperrors.CodeUsageError, "--reason is required for R1-R3 commands", nil)
+	}
+
+	operator := resolveOperator(f.Operator)
+	for _, plan := range plans {
+		authErr := safety.Authorize(plan.Risk.Effective, safety.Options{
+			Yes:                f.Yes,
+			NonInteractive:     true,
+			Ticket:             f.Ticket,
+			TicketPattern:      plan.Target.Value.TicketPattern,
+			RequiredAllowFlags: requiredAllowFlags(plan.Risk.Effective),
+			GrantedAllowFlags:  map[safety.AllowFlag]bool{allowDestructive: allow},
+			Stdin:              cmd.InOrStdin(),
+			Stdout:             cmd.OutOrStdout(),
+			Roles:              plan.Target.Value.Roles,
+			Operator:           operator,
+		})
+		if authErr == nil {
+			continue
+		}
+		appendExecAudit(
+			plan.Target.Value,
+			plan.Target.Name,
+			operator,
+			f.Ticket,
+			reason,
+			command,
+			plan.Risk.Effective,
+			srvgovaudit.StatusDenied,
+			0,
+			"",
+			"",
+			authErr,
+			srvgovaudit.EventTypeAuthorizationDenied,
+		)
+		return apperrors.New(
+			apperrors.CodeAuthorizationRequired,
+			fmt.Sprintf(
+				"target %q (%s) authorization denied: %s",
+				redact.String(plan.Target.Name),
+				riskName(plan.Risk.Effective),
+				apperrors.AsAppError(authErr).Message,
+			),
+			authErr,
+		)
 	}
 	return nil
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"github.com/JiangHe12/opskit-core/apperrors"
 
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
+	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 	"github.com/JiangHe12/srvgov-cli/internal/sshexec"
 )
@@ -90,20 +92,224 @@ func TestExecFanoutRejectsTargetParsingErrorsBeforeSSH(t *testing.T) {
 	}
 }
 
-func TestExecFanoutRejectsAnyEffectiveRiskAboveR0BeforeSSH(t *testing.T) {
+func TestExecFanoutPreauthorizationPreventsPartialWrites(t *testing.T) {
+	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "alpha", TicketPattern: `^OPS-[0-9]+$`},
+		{Name: "bravo", TicketPattern: `^CHG-[0-9]+$`},
+	})
+	runner := &targetSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	_, err := executeRoot(t, configPath,
+		"--yes", "--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
+		"systemctl restart nginx",
+	)
+	assertAppError(t, err, apperrors.CodeAuthorizationRequired, 8)
+	appErr := apperrors.AsAppError(err)
+	if !strings.Contains(appErr.Message, `target "bravo"`) || !strings.Contains(appErr.Message, "R2") {
+		t.Fatalf("error = %#v, want rejected target and effective tier", appErr)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands = %#v, want zero partial writes", runner.commands)
+	}
+	events := readAuditEvents(t)
+	if len(events) != 1 ||
+		events[0].Context.Name != "bravo" ||
+		events[0].EventType != srvgovaudit.EventTypeAuthorizationDenied ||
+		events[0].Status != srvgovaudit.StatusDenied {
+		t.Fatalf("audit events = %#v", events)
+	}
+}
+
+func TestExecFanoutProtectedTargetRequiresR3AllowBeforeAnySSH(t *testing.T) {
+	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "alpha"},
+		{Name: "bravo", Protected: true},
+	})
+	runner := &targetSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	_, err := executeRoot(t, configPath,
+		"--yes", "--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
+		"systemctl restart nginx",
+	)
+	assertAppError(t, err, apperrors.CodeAuthorizationRequired, 8)
+	appErr := apperrors.AsAppError(err)
+	if !strings.Contains(appErr.Message, `target "bravo"`) || !strings.Contains(appErr.Message, "R3") {
+		t.Fatalf("error = %#v, want protected target R3", appErr)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands = %#v, want zero partial writes", runner.commands)
+	}
+}
+
+func TestExecFanoutRequiresTicketToMatchEveryTarget(t *testing.T) {
+	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "alpha", TicketPattern: `^OPS-[0-9]+$`},
+		{Name: "bravo", TicketPattern: `^CHG-[0-9]+$`},
+	})
+	runner := &targetSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	_, err := executeRoot(t, configPath,
+		"--yes", "--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
+		"systemctl restart nginx",
+	)
+	assertAppError(t, err, apperrors.CodeAuthorizationRequired, 8)
+	if !strings.Contains(apperrors.AsAppError(err).Message, `target "bravo"`) {
+		t.Fatalf("error = %#v, want bravo ticket rejection", apperrors.AsAppError(err))
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands = %#v, want no SSH", runner.commands)
+	}
+}
+
+func TestExecFanoutRequiresRBACOnEveryTarget(t *testing.T) {
+	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "alpha", Roles: map[string]string{"alice": "writer"}},
+		{Name: "bravo", Roles: map[string]string{"bob": "writer"}},
+	})
+	runner := &targetSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	_, err := executeRoot(t, configPath,
+		"--operator", "alice", "--yes", "--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
+		"systemctl restart nginx",
+	)
+	assertAppError(t, err, apperrors.CodeAuthorizationRequired, 8)
+	if !strings.Contains(apperrors.AsAppError(err).Message, `target "bravo"`) {
+		t.Fatalf("error = %#v, want bravo RBAC rejection", apperrors.AsAppError(err))
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands = %#v, want no SSH", runner.commands)
+	}
+}
+
+func TestExecFanoutRequiresReasonBeforeAnySSH(t *testing.T) {
 	configPath := prepareFanoutContexts(t)
 	runner := &targetSSHRunner{}
 	restore := replaceSSHRunner(runner)
 	t.Cleanup(restore)
 
-	_, err := executeRoot(t, configPath, "exec", "--targets", "bravo,alpha", "systemctl restart nginx")
+	_, err := executeRoot(t, configPath,
+		"--yes", "--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo",
+		"systemctl restart nginx",
+	)
 	assertAppError(t, err, apperrors.CodeUsageError, 1)
-	appErr := apperrors.AsAppError(err)
-	if !strings.Contains(appErr.Message, `target "alpha"`) || !strings.Contains(appErr.Message, "R2") {
-		t.Fatalf("error = %#v, want sorted first target and effective tier", appErr)
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands = %#v, want no SSH", runner.commands)
+	}
+}
+
+func TestExecFanoutAuthorizationIsAlwaysNonInteractive(t *testing.T) {
+	configPath := prepareFanoutContexts(t)
+	runner := &targetSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	output, err := executeRootWithInput(t, configPath, strings.NewReader("yes\n"),
+		"--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
+		"systemctl restart nginx",
+	)
+	assertAppError(t, err, apperrors.CodeAuthorizationRequired, 8)
+	if output != "" {
+		t.Fatalf("authorization prompted unexpectedly: %q", output)
 	}
 	if len(runner.commands) != 0 {
-		t.Fatalf("commands = %#v, want entire fanout rejected before SSH", runner.commands)
+		t.Fatalf("commands = %#v, want no SSH", runner.commands)
+	}
+}
+
+func TestExecFanoutExecutesAllAuthorizedR2TargetsAndAuditsOwnRisk(t *testing.T) {
+	configPath := prepareFanoutContexts(t)
+	runner := &targetSSHRunner{results: map[string]sshexec.Result{
+		"alpha\x00systemctl restart nginx": {},
+		"bravo\x00systemctl restart nginx": {},
+	}}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	output, err := executeRoot(t, configPath,
+		"-o", "json", "--yes", "--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
+		"systemctl restart nginx",
+	)
+	if err != nil {
+		t.Fatalf("exec fanout error = %v", err)
+	}
+	if len(runner.commands) != 2 {
+		t.Fatalf("commands = %#v, want both targets", runner.commands)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("Unmarshal(fanout) error = %v; output = %q", err, output)
+	}
+	if _, ok := got["maxEffectiveRiskTier"]; ok {
+		t.Fatalf("execution output added dry-run field: %s", output)
+	}
+	events := readAuditEvents(t)
+	if len(events) != 2 {
+		t.Fatalf("audit events = %#v", events)
+	}
+	for _, event := range events {
+		if event.RiskTier != "R2" || event.EventType != srvgovaudit.EventTypeExecRun {
+			t.Fatalf("audit event = %#v", event)
+		}
+	}
+}
+
+func TestExecFanoutDryRunShowsPerTargetAndMaximumEffectiveRiskWithoutAuthorization(t *testing.T) {
+	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "alpha"},
+		{Name: "bravo", Protected: true},
+	})
+	runner := &targetSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	output, err := executeRoot(t, configPath,
+		"-o", "json", "exec", "--targets", "bravo,alpha", "--dry-run",
+		"systemctl restart nginx",
+	)
+	if err != nil {
+		t.Fatalf("exec dry-run error = %v", err)
+	}
+	var got fanoutView
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("Unmarshal(fanout) error = %v; output = %q", err, output)
+	}
+	if got.MaxEffectiveRiskTier != "R3" {
+		t.Fatalf("max effective risk = %q, want R3", got.MaxEffectiveRiskTier)
+	}
+	if len(got.Results) != 2 {
+		t.Fatalf("results = %#v", got.Results)
+	}
+	alpha, ok := got.Results[0].Data.(map[string]any)
+	if !ok {
+		t.Fatalf("alpha data = %#v", got.Results[0].Data)
+	}
+	bravo, ok := got.Results[1].Data.(map[string]any)
+	if !ok {
+		t.Fatalf("bravo data = %#v", got.Results[1].Data)
+	}
+	if alpha["effectiveRiskTier"] != "R2" || bravo["effectiveRiskTier"] != "R3" {
+		t.Fatalf("dry-run data = %#v / %#v", alpha, bravo)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands = %#v, want no SSH", runner.commands)
+	}
+	if _, err := os.Stat(defaultAuditPath(t)); !os.IsNotExist(err) {
+		t.Fatalf("dry-run audit file error = %v, want not exist", err)
 	}
 }
 
@@ -121,6 +327,52 @@ func TestExecFanoutSortsDeduplicatesRedactsAndAuditsEachTarget(t *testing.T) {
 	output, err := executeRoot(t, configPath, "-o", "json", "exec", "--targets", "bravo,alpha,bravo", "--concurrency", "2", "pwd")
 	if err != nil {
 		t.Fatalf("exec fanout error = %v", err)
+	}
+	const v1Output = `{
+  "targets": [
+    "alpha",
+    "bravo"
+  ],
+  "concurrency": 2,
+  "summary": {
+    "total": 2,
+    "succeeded": 2,
+    "failed": 0
+  },
+  "results": [
+    {
+      "target": "alpha",
+      "host": "alpha.example:22",
+      "ok": true,
+      "data": {
+        "context": "alpha",
+        "host": "alpha.example:22",
+        "command": "pwd",
+        "riskTier": "R0",
+        "stdout": "password=[REDACTED]\n",
+        "stderr": "",
+        "exitCode": 0
+      }
+    },
+    {
+      "target": "bravo",
+      "host": "bravo.example:22",
+      "ok": true,
+      "data": {
+        "context": "bravo",
+        "host": "bravo.example:22",
+        "command": "pwd",
+        "riskTier": "R0",
+        "stdout": "/srv/bravo\n",
+        "stderr": "",
+        "exitCode": 0
+      }
+    }
+  ]
+}
+`
+	if output != v1Output {
+		t.Fatalf("execution JSON changed from v1\nactual:\n%s\nwant:\n%s", output, v1Output)
 	}
 	var got fanoutView
 	if err := json.Unmarshal([]byte(output), &got); err != nil {
@@ -148,14 +400,18 @@ func TestExecFanoutContinuesAfterFailureAndReturnsBackendError(t *testing.T) {
 	configPath := prepareFanoutContexts(t)
 	runner := &targetSSHRunner{
 		results: map[string]sshexec.Result{
-			"alpha\x00pwd": {Stdout: "/srv/alpha\n"},
-			"bravo\x00pwd": {ExitCode: 23, Stderr: "password=failed-secret"},
+			"alpha\x00systemctl restart nginx": {Stdout: "restarted\n"},
+			"bravo\x00systemctl restart nginx": {ExitCode: 23, Stderr: "password=failed-secret"},
 		},
 	}
 	restore := replaceSSHRunner(runner)
 	t.Cleanup(restore)
 
-	output, err := executeRoot(t, configPath, "-o", "json", "exec", "--targets", "alpha,bravo", "pwd")
+	output, err := executeRoot(t, configPath,
+		"-o", "json", "--yes", "--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
+		"systemctl restart nginx",
+	)
 	assertAppError(t, err, apperrors.CodeBackendError, 7)
 	var got fanoutView
 	if jsonErr := json.Unmarshal([]byte(output), &got); jsonErr != nil {
@@ -222,17 +478,47 @@ func TestStatusAndPortsFanoutUseIndependentR0Probes(t *testing.T) {
 }
 
 func prepareFanoutContexts(t *testing.T) string {
+	return prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "bravo"},
+		{Name: "alpha"},
+	})
+}
+
+type fanoutContextSpec struct {
+	Name          string
+	Protected     bool
+	TicketPattern string
+	Roles         map[string]string
+}
+
+func prepareFanoutContextsWith(t *testing.T, specs []fanoutContextSpec) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	configPath := filepath.Join(home, "config.yaml")
-	for _, target := range []string{"bravo", "alpha"} {
-		runCommand(t, configPath,
-			"ctx", "set", target,
-			"--server", "ssh://alice@"+target+".example:22",
-		)
+	for _, spec := range specs {
+		args := []string{
+			"ctx", "set", spec.Name,
+			"--server", "ssh://alice@" + spec.Name + ".example:22",
+		}
+		if spec.Protected {
+			args = append(args, "--protected")
+		}
+		if spec.TicketPattern != "" {
+			args = append(args, "--ticket-pattern", spec.TicketPattern)
+		}
+		runCommand(t, configPath, args...)
+		for operator, role := range spec.Roles {
+			runCommand(t, configPath,
+				"ctx", "role", "set", spec.Name,
+				"--target-operator", operator,
+				"--role", role,
+			)
+		}
 	}
-	runCommand(t, configPath, "ctx", "use", "alpha")
+	if len(specs) > 0 {
+		runCommand(t, configPath, "ctx", "use", specs[0].Name)
+	}
 	return configPath
 }
