@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JiangHe12/srvgov-cli/internal/redact"
+	"github.com/JiangHe12/opskit-core/redact"
 )
 
 // LogOptions controls journal or file observation.

@@ -9,9 +9,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/JiangHe12/opskit-core/apperrors"
+	"github.com/JiangHe12/opskit-core/redact"
 
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
-	"github.com/JiangHe12/srvgov-cli/internal/redact"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 )
 

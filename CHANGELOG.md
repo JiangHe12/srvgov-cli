@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## v0.6.3
+
+### Changed
+
+- Replaced the local redaction implementation with the byte-equivalent shared
+  `github.com/JiangHe12/opskit-core/redact` package from opskit-core v1.0.4.
+
 ## v0.6.2
 
 ### Fixed

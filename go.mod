@@ -3,7 +3,7 @@ module github.com/JiangHe12/srvgov-cli
 go 1.25.0
 
 require (
-	github.com/JiangHe12/opskit-core v1.0.3
+	github.com/JiangHe12/opskit-core v1.0.4
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.52.0
 )

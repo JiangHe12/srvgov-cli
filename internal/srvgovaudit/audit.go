@@ -6,8 +6,7 @@ import (
 	"time"
 
 	coreaudit "github.com/JiangHe12/opskit-core/audit"
-
-	"github.com/JiangHe12/srvgov-cli/internal/redact"
+	"github.com/JiangHe12/opskit-core/redact"
 )
 
 var appendMu sync.Mutex

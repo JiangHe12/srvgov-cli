@@ -7,8 +7,7 @@ import (
 	"strings"
 
 	"github.com/JiangHe12/opskit-core/apperrors"
-
-	"github.com/JiangHe12/srvgov-cli/internal/redact"
+	"github.com/JiangHe12/opskit-core/redact"
 )
 
 var ssProcessPattern = regexp.MustCompile(`\("([^"]*)",pid=([0-9]+)`)

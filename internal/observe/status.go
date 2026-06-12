@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/JiangHe12/srvgov-cli/internal/redact"
+	"github.com/JiangHe12/opskit-core/redact"
 )
 
 // Probe is one independent read-only remote observation.

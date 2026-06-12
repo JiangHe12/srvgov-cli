@@ -11,10 +11,10 @@ import (
 
 	"github.com/JiangHe12/opskit-core/apperrors"
 	coreaudit "github.com/JiangHe12/opskit-core/audit"
+	"github.com/JiangHe12/opskit-core/redact"
 	"github.com/JiangHe12/opskit-core/safety"
 
 	"github.com/JiangHe12/srvgov-cli/internal/fanout"
-	"github.com/JiangHe12/srvgov-cli/internal/redact"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 	"github.com/JiangHe12/srvgov-cli/internal/sshexec"
