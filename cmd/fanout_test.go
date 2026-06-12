@@ -194,7 +194,10 @@ func TestExecFanoutRequiresRBACOnEveryTarget(t *testing.T) {
 }
 
 func TestExecFanoutRequiresReasonBeforeAnySSH(t *testing.T) {
-	configPath := prepareFanoutContexts(t)
+	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "alpha"},
+		{Name: "bravo", Protected: true},
+	})
 	runner := &targetSSHRunner{}
 	restore := replaceSSHRunner(runner)
 	t.Cleanup(restore)
@@ -205,8 +208,22 @@ func TestExecFanoutRequiresReasonBeforeAnySSH(t *testing.T) {
 		"systemctl restart nginx",
 	)
 	assertAppError(t, err, apperrors.CodeUsageError, 1)
+	message := apperrors.AsAppError(err).Message
+	for _, flag := range []string{"--reason", "--yes", "--ticket", "--allow-destructive"} {
+		if !strings.Contains(message, flag) {
+			t.Fatalf("message = %q, want %s", message, flag)
+		}
+	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("commands = %#v, want no SSH", runner.commands)
+	}
+	events := readAuditEvents(t)
+	if len(events) != 1 ||
+		events[0].Context.Name != "bravo" ||
+		events[0].EventType != srvgovaudit.EventTypeAuthorizationDenied ||
+		events[0].Status != srvgovaudit.StatusDenied ||
+		events[0].RiskTier != "R3" {
+		t.Fatalf("audit events = %#v", events)
 	}
 }
 

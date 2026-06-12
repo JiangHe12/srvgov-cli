@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+## v0.6.2
+
+### Fixed
+
+- Expanded structured and command-line redaction with fail-safe `*_key`
+  recognition for vendor credentials, explicit preservation of common benign
+  database key metadata, and coverage for cookies and session IDs.
+- Missing `--reason` denials now write `authorization.denied` audit events
+  across regular, stdin, and fanout execution paths while preserving the
+  original usage exit code when audit persistence fails.
+- Authorization errors for a missing reason now report the complete flag set
+  required by the effective R1-R3 tier.
+- Server status omits virtual and duplicate Docker filesystems, retaining only
+  unique `/dev/*` block devices.
+- Docker logs now request timestamps and return the same structured
+  line-and-metadata shape as the general logs command, with graceful fallback
+  for malformed timestamps.
+
 ## v0.6.1
 
 ### Fixed

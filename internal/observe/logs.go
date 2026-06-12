@@ -94,6 +94,28 @@ func ParseFileLines(value, grep string) []LogLine {
 	return result
 }
 
+// ParseDockerLines normalizes --timestamps output and preserves malformed lines.
+func ParseDockerLines(values ...string) []LogLine {
+	result := make([]LogLine, 0)
+	for _, value := range values {
+		scanner := bufio.NewScanner(strings.NewReader(value))
+		for scanner.Scan() {
+			line := scanner.Text()
+			timestamp, message, ok := strings.Cut(line, " ")
+			parsed, err := time.Parse(time.RFC3339Nano, timestamp)
+			if !ok || err != nil {
+				result = append(result, LogLine{Message: redact.String(line)})
+				continue
+			}
+			result = append(result, LogLine{
+				Timestamp: parsed.UTC().Format(time.RFC3339Nano),
+				Message:   redact.String(message),
+			})
+		}
+	}
+	return result
+}
+
 func firstValue(record map[string]any, names ...string) string {
 	for _, name := range names {
 		if value := stringValue(record[name]); value != "" {

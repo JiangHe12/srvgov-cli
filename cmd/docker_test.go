@@ -109,8 +109,8 @@ func TestDockerLogsLimitsAndRedactsStdoutAndStderr(t *testing.T) {
 	command := dockerLogsCommand("api", 2)
 	runner := &scriptedSSHRunner{results: map[string]sshexec.Result{
 		command: {
-			Stdout: "first password=stdout-secret\nsecond\n",
-			Stderr: "third token=stderr-secret\n",
+			Stdout: "2026-06-12T08:15:30.123456789Z first password=stdout-secret\nsecond without timestamp\n",
+			Stderr: "2026-06-12T08:15:31Z third token=stderr-secret\n",
 		},
 	}}
 	restore := replaceSSHRunner(runner)
@@ -124,9 +124,16 @@ func TestDockerLogsLimitsAndRedactsStdoutAndStderr(t *testing.T) {
 	if err := json.Unmarshal([]byte(output), &got); err != nil {
 		t.Fatalf("Unmarshal(logs) error = %v; output = %q", err, output)
 	}
-	if got.Container != "api" || len(got.Lines) != 3 ||
+	if got.Meta.Backend != "docker" || got.Meta.Container != "api" ||
+		got.Meta.RequestedLines != 2 || got.Meta.ReturnedLines != 3 ||
+		len(got.Lines) != 3 ||
 		strings.Contains(output, "stdout-secret") || strings.Contains(output, "stderr-secret") {
 		t.Fatalf("logs = %#v; output = %s", got, output)
+	}
+	if got.Lines[0].Timestamp != "2026-06-12T08:15:30.123456789Z" ||
+		got.Lines[1].Timestamp != "" ||
+		got.Lines[1].Message != "second without timestamp" {
+		t.Fatalf("logs = %#v", got)
 	}
 	audit := string(readAuditData(t))
 	if strings.Contains(audit, "stdout-secret") || strings.Contains(audit, "stderr-secret") {

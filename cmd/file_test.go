@@ -225,6 +225,36 @@ func TestFileWriteStdinMissingTicketDoesNotReadContent(t *testing.T) {
 	}
 }
 
+func TestFileWriteMissingReasonAuditsDenialBeforeReadingContent(t *testing.T) {
+	configPath := prepareExecContext(t, false)
+	stdin := &failOnRead{}
+	runner := &scriptedStdinSSHRunner{}
+	restore := replaceSSHStdinRunner(runner)
+	t.Cleanup(restore)
+
+	_, err := executeRootWithInput(t, configPath, stdin,
+		"--non-interactive", "--yes", "--ticket", "OPS-42",
+		"file", "write", "/tmp/app", "--content", "data",
+	)
+	assertAppError(t, err, apperrors.CodeUsageError, 1)
+	message := apperrors.AsAppError(err).Message
+	for _, flag := range []string{"--reason", "--yes", "--ticket"} {
+		if !strings.Contains(message, flag) {
+			t.Fatalf("message = %q, want %s", message, flag)
+		}
+	}
+	if stdin.reads != 0 || runner.calls != 0 {
+		t.Fatalf("stdin reads = %d; runner calls = %d", stdin.reads, runner.calls)
+	}
+	events := readAuditEvents(t)
+	if len(events) != 1 ||
+		events[0].EventType != srvgovaudit.EventTypeAuthorizationDenied ||
+		events[0].Status != srvgovaudit.StatusDenied ||
+		events[0].RiskTier != "R2" {
+		t.Fatalf("audit events = %#v", events)
+	}
+}
+
 func TestFileWriteStdinAuthorizesThenStreamsAndAuditsDigest(t *testing.T) {
 	configPath := prepareExecContext(t, false)
 	content := "token=stdin-secret\nsecond line"

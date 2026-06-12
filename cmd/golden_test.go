@@ -43,7 +43,7 @@ func TestCommandGoldenOutputs(t *testing.T) {
 			Stdout: `{"id":"abc","name":"/api","image":"repo:tag","state":"running","status":"running","restartPolicy":"unless-stopped","ports":{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]},"mounts":[{"Type":"bind","Source":"/srv/api","Destination":"/app","Mode":"ro","RW":false}],"createdAt":"2026-06-11T10:00:00Z"}`,
 		},
 		dockerLogsCommand("api", defaultDockerLogTail): {
-			Stdout: "ready\nserving\n",
+			Stdout: "2026-06-12T08:15:30Z ready\n2026-06-12T08:15:31.123456789Z serving\n",
 		},
 		dockerActionCommand("restart", "api"): {},
 	}}

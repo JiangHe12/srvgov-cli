@@ -63,6 +63,26 @@ func TestExecAuditWriteFailureDoesNotReplaceRemoteExitCode(t *testing.T) {
 	}
 }
 
+func TestMissingReasonAuditFailureWarnsWithoutReplacingUsageError(t *testing.T) {
+	configPath := prepareExecContext(t, false)
+	blockDefaultAuditPath(t, filepath.Dir(configPath))
+	runner := &fakeSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	stderr, err := executeSrvgovWithStderr(t, configPath,
+		"--non-interactive", "--yes", "--ticket", "OPS-42",
+		"exec", "systemctl restart nginx",
+	)
+	assertAppError(t, err, apperrors.CodeUsageError, 1)
+	if !strings.Contains(stderr, auditWarningText) {
+		t.Fatalf("stderr = %q, want audit warning", stderr)
+	}
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want 0", runner.calls)
+	}
+}
+
 func TestFileWriteAuditFailureWarnsWithoutChangingSuccess(t *testing.T) {
 	configPath := prepareExecContext(t, false)
 	blockDefaultAuditPath(t, filepath.Dir(configPath))

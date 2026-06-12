@@ -201,11 +201,34 @@ func authorizeExecFanout(
 	allow bool,
 	maxEffective safety.Risk,
 ) error {
+	operator := resolveOperator(f.Operator)
 	if maxEffective >= safety.R1 && strings.TrimSpace(reason) == "" {
-		return apperrors.New(apperrors.CodeUsageError, "--reason is required for R1-R3 commands", nil)
+		reasonErr := missingReasonError(maxEffective)
+		for _, plan := range plans {
+			if plan.Risk.Effective != maxEffective {
+				continue
+			}
+			appendExecAudit(
+				f,
+				plan.Target.Value,
+				plan.Target.Name,
+				operator,
+				f.Ticket,
+				reason,
+				command,
+				plan.Risk.Effective,
+				srvgovaudit.StatusDenied,
+				0,
+				"",
+				"",
+				reasonErr,
+				srvgovaudit.EventTypeAuthorizationDenied,
+			)
+			break
+		}
+		return reasonErr
 	}
 
-	operator := resolveOperator(f.Operator)
 	for _, plan := range plans {
 		authErr := safety.Authorize(plan.Risk.Effective, safety.Options{
 			Yes:                f.Yes,
@@ -430,6 +453,15 @@ func requiredAuthorization(risk safety.Risk) []string {
 	default:
 		return []string{"--yes", "--ticket", "--allow-destructive"}
 	}
+}
+
+func missingReasonError(risk safety.Risk) error {
+	requirements := append([]string{"--reason"}, requiredAuthorization(risk)...)
+	return apperrors.New(
+		apperrors.CodeUsageError,
+		fmt.Sprintf("%s authorization requires %s", riskName(risk), strings.Join(requirements, ", ")),
+		nil,
+	)
 }
 
 func riskName(risk safety.Risk) string {

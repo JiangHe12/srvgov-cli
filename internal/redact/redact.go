@@ -26,7 +26,7 @@ var patterns = []struct {
 	},
 	{
 		re: regexp.MustCompile(
-			`(?i)(^|\s)(--(?:password|token|secret)|-p)(\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`,
+			`(?i)(^|\s)(--(?:password|passwd|requirepass|token|secret|api[-_]?key|access[-_]?key|passphrase)|-p)(=+|\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`,
 		),
 		replacement: `${1}${2}${3}` + replacement,
 	},
@@ -35,6 +35,30 @@ var patterns = []struct {
 var assignmentRE = regexp.MustCompile(
 	`(^|[^A-Za-z0-9_.-])([A-Za-z0-9_.-]+)(\s*[:=]\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s,;]+)`,
 )
+
+var harmlessKeyNames = map[string]bool{
+	"key":             true,
+	"primary_key":     true,
+	"foreign_key":     true,
+	"sort_key":        true,
+	"partition_key":   true,
+	"composite_key":   true,
+	"candidate_key":   true,
+	"surrogate_key":   true,
+	"natural_key":     true,
+	"range_key":       true,
+	"hash_key":        true,
+	"shard_key":       true,
+	"cluster_key":     true,
+	"clustering_key":  true,
+	"routing_key":     true,
+	"cache_key":       true,
+	"group_key":       true,
+	"dedup_key":       true,
+	"public_key":      true,
+	"idempotency_key": true,
+	"key_name":        true,
+}
 
 // String returns value with recognized secrets replaced. It is intentionally
 // context-free so the same function can guard caller output and audit records.
@@ -58,13 +82,25 @@ func redactAssignment(candidate string) string {
 }
 
 func isSensitiveKey(key string) bool {
-	for _, word := range splitKeyWords(key) {
-		switch strings.ToLower(word) {
-		case "password", "token", "secret":
+	words := splitKeyWords(key)
+	hasKey := false
+	normalizedWords := make([]string, 0, len(words))
+	for _, rawWord := range words {
+		word := strings.ToLower(rawWord)
+		normalizedWords = append(normalizedWords, word)
+		switch word {
+		case "password", "passwd", "pwd", "secret", "token", "credential", "credentials",
+			"passphrase", "apikey", "privatekey", "accesskey", "secretkey", "authtoken",
+			"clientsecret", "cookie", "sessionid":
 			return true
+		case "key":
+			hasKey = true
 		}
 	}
-	return false
+	if !hasKey {
+		return false
+	}
+	return !harmlessKeyNames[strings.Join(normalizedWords, "_")]
 }
 
 func splitKeyWords(key string) []string {

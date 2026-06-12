@@ -142,10 +142,15 @@ func parseMemory(value string) Memory {
 
 func parseDisk(value string) []Disk {
 	var result []Disk
+	seenDevices := make(map[string]bool)
 	scanner := bufio.NewScanner(strings.NewReader(value))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 6 || fields[0] == "Filesystem" {
+			continue
+		}
+		device := fields[0]
+		if !strings.HasPrefix(device, "/dev/") || seenDevices[device] {
 			continue
 		}
 		size, sizeErr := strconv.ParseInt(fields[1], 10, 64)
@@ -155,6 +160,7 @@ func parseDisk(value string) []Disk {
 		if sizeErr != nil || usedErr != nil || availErr != nil || pctErr != nil {
 			continue
 		}
+		seenDevices[device] = true
 		result = append(result, Disk{
 			Mount:  redact.String(strings.Join(fields[5:], " ")),
 			Size:   size * 1024,

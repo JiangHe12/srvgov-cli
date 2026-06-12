@@ -1,5 +1,8 @@
+Backend	docker
 Container	api
-  LINE
------------
-  ready
-  serving
+Requested Lines	100
+Returned Lines	2
+  TIMESTAMP                         HOSTNAME    UNIT    PRIORITY    MESSAGE
+---------------------------------+----------+------+----------+----------
+  2026-06-12T08:15:30Z                                              ready
+  2026-06-12T08:15:31.123456789Z                                    serving

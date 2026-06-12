@@ -67,8 +67,15 @@ type dockerInspectView struct {
 }
 
 type dockerLogsView struct {
-	Container string   `json:"container"`
-	Lines     []string `json:"lines"`
+	Lines []observe.LogLine `json:"lines"`
+	Meta  dockerLogsMeta    `json:"meta"`
+}
+
+type dockerLogsMeta struct {
+	Backend        string `json:"backend"`
+	Container      string `json:"container"`
+	RequestedLines int    `json:"requestedLines"`
+	ReturnedLines  int    `json:"returnedLines"`
 }
 
 type dockerActionView struct {
@@ -180,10 +187,15 @@ func runDockerLogs(cmd *cobra.Command, f *cliFlags, container string, tail int) 
 	if err != nil {
 		return err
 	}
-	lines := redactDockerLogLines(result.Stdout, result.Stderr)
+	lines := observe.ParseDockerLines(result.Stdout, result.Stderr)
 	return printDockerLogs(f, dockerLogsView{
-		Container: redact.String(container),
-		Lines:     lines,
+		Lines: lines,
+		Meta: dockerLogsMeta{
+			Backend:        "docker",
+			Container:      redact.String(container),
+			RequestedLines: tail,
+			ReturnedLines:  len(lines),
+		},
 	})
 }
 
@@ -243,7 +255,7 @@ func dockerInspectCommand(container string) string {
 }
 
 func dockerLogsCommand(container string, tail int) string {
-	return fmt.Sprintf("docker logs --tail %d -- %s", tail, observe.ShellQuote(container))
+	return fmt.Sprintf("docker logs --timestamps --tail %d -- %s", tail, observe.ShellQuote(container))
 }
 
 func dockerActionCommand(action, container string) string {
@@ -328,17 +340,6 @@ func parseDockerInspect(output string) (dockerInspectView, error) {
 	}, nil
 }
 
-func redactDockerLogLines(values ...string) []string {
-	lines := make([]string, 0)
-	for _, value := range values {
-		scanner := bufio.NewScanner(strings.NewReader(value))
-		for scanner.Scan() {
-			lines = append(lines, redact.String(scanner.Text()))
-		}
-	}
-	return lines
-}
-
 func printDockerList(f *cliFlags, items []dockerListItem) error {
 	p := newPrinter(f)
 	if f.Output == "json" {
@@ -376,12 +377,17 @@ func printDockerLogs(f *cliFlags, value dockerLogsView) error {
 	if f.Output == "json" {
 		return p.JSONData("DockerLogs", value)
 	}
-	p.KV([][2]string{{"Container", value.Container}})
+	p.KV([][2]string{
+		{"Backend", value.Meta.Backend},
+		{"Container", value.Meta.Container},
+		{"Requested Lines", strconv.Itoa(value.Meta.RequestedLines)},
+		{"Returned Lines", strconv.Itoa(value.Meta.ReturnedLines)},
+	})
 	rows := make([][]string, 0, len(value.Lines))
 	for _, line := range value.Lines {
-		rows = append(rows, []string{line})
+		rows = append(rows, []string{line.Timestamp, line.Hostname, line.Unit, line.Priority, line.Message})
 	}
-	p.Table([]string{"LINE"}, rows)
+	p.Table([]string{"TIMESTAMP", "HOSTNAME", "UNIT", "PRIORITY", "MESSAGE"}, rows)
 	return nil
 }
 

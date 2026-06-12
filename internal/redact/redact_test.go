@@ -169,24 +169,122 @@ func TestStringDoesNotRedactSensitiveWordSubstrings(t *testing.T) {
 	}
 }
 
+func TestStringSensitiveKeyTruthTable(t *testing.T) {
+	t.Parallel()
+
+	sensitive := []string{
+		"password",
+		"passwd",
+		"pwd",
+		"secret",
+		"secret_key",
+		"client_secret",
+		"token",
+		"access_token",
+		"auth_token",
+		"api_key",
+		"apiKey",
+		"apikey",
+		"private_key",
+		"privatekey",
+		"access_key",
+		"accesskey",
+		"credential",
+		"credentials",
+		"passphrase",
+		"STRIPE_KEY",
+		"DEPLOY_KEY",
+		"SSH_KEY",
+		"SENDGRID_KEY",
+		"GPG_KEY",
+		"MAILGUN_KEY",
+		"SENTRY_KEY",
+		"cookie",
+		"sessionid",
+		"AWS_SECRET_ACCESS_KEY",
+		"X-Api-Key",
+	}
+	for _, key := range sensitive {
+		t.Run("redacts_"+key, func(t *testing.T) {
+			t.Parallel()
+			input := key + "=sensitive-value"
+			want := key + "=[REDACTED]"
+			if got := String(input); got != want {
+				t.Fatalf("String(%q) = %q, want %q", input, got, want)
+			}
+		})
+	}
+
+	benign := []string{
+		"passwordless",
+		"tokenizer",
+		"tokenization",
+		"secretary",
+		"key",
+		"primary_key",
+		"foreign_key",
+		"sort_key",
+		"partition_key",
+		"composite_key",
+		"candidate_key",
+		"surrogate_key",
+		"natural_key",
+		"range_key",
+		"hash_key",
+		"shard_key",
+		"cluster_key",
+		"clustering_key",
+		"routing_key",
+		"cache_key",
+		"group_key",
+		"dedup_key",
+		"public_key",
+		"idempotency_key",
+		"key_name",
+		"username",
+		"host",
+		"port",
+		"path",
+		"monkey",
+		"keyboard",
+	}
+	for _, key := range benign {
+		t.Run("preserves_"+key, func(t *testing.T) {
+			t.Parallel()
+			input := key + "=ordinary-value"
+			if got := String(input); got != input {
+				t.Fatalf("String(%q) = %q, want unchanged", input, got)
+			}
+		})
+	}
+}
+
 func TestStringRedactsFlagValues(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name       string
 		input      string
+		want       string
 		mustNotSee string
 	}{
-		{name: "long password", input: "client --password hunter2 --verbose", mustNotSee: "hunter2"},
-		{name: "short password", input: "client -p swordfish", mustNotSee: "swordfish"},
-		{name: "long token quoted", input: `client --token "abc def"`, mustNotSee: "abc def"},
-		{name: "long secret", input: "client --secret top-secret", mustNotSee: "top-secret"},
+		{name: "long password", input: "client --password hunter2 --verbose", want: "client --password [REDACTED] --verbose", mustNotSee: "hunter2"},
+		{name: "short password", input: "client -p swordfish", want: "client -p [REDACTED]", mustNotSee: "swordfish"},
+		{name: "long token quoted", input: `client --token "abc def"`, want: "client --token [REDACTED]", mustNotSee: "abc def"},
+		{name: "long secret", input: "client --secret top-secret", want: "client --secret [REDACTED]", mustNotSee: "top-secret"},
+		{name: "requirepass", input: "redis-server --requirepass 123456", want: "redis-server --requirepass [REDACTED]", mustNotSee: "123456"},
+		{name: "api key", input: "client --api-key api-value", want: "client --api-key [REDACTED]", mustNotSee: "api-value"},
+		{name: "access key underscore", input: "client --access_key=access-value", want: "client --access_key=[REDACTED]", mustNotSee: "access-value"},
+		{name: "passphrase equals", input: "client --passphrase=phrase-value", want: "client --passphrase=[REDACTED]", mustNotSee: "phrase-value"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := String(tt.input)
+			if got != tt.want {
+				t.Fatalf("String(%q) = %q, want %q", tt.input, got, tt.want)
+			}
 			if strings.Contains(got, tt.mustNotSee) {
 				t.Fatalf("String() leaked %q in %q", tt.mustNotSee, got)
 			}

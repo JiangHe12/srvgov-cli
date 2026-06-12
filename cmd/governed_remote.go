@@ -31,11 +31,13 @@ func runGovernedCommandWithStdin(
 	fileInfo func() *srvgovaudit.FileInfo,
 ) (sshexec.Result, governedRisk, error) {
 	risk := classifyGovernedCommand(item, contextName, command)
+	operator := resolveOperator(f.Operator)
 	if risk.Effective >= safety.R1 && strings.TrimSpace(reason) == "" {
-		return sshexec.Result{}, risk, apperrors.New(apperrors.CodeUsageError, "--reason is required for R1-R3 commands", nil)
+		reasonErr := missingReasonError(risk.Effective)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", reasonErr, srvgovaudit.EventTypeAuthorizationDenied)
+		return sshexec.Result{}, risk, reasonErr
 	}
 
-	operator := resolveOperator(f.Operator)
 	authErr := safety.Authorize(risk.Effective, safety.Options{
 		Yes:                f.Yes,
 		NonInteractive:     f.NonInteractive,
@@ -95,11 +97,13 @@ func runGovernedCommand(
 	eventType srvgovaudit.EventType,
 ) (sshexec.Result, governedRisk, error) {
 	risk := classifyGovernedCommand(item, contextName, command)
+	operator := resolveOperator(f.Operator)
 	if risk.Effective >= safety.R1 && strings.TrimSpace(reason) == "" {
-		return sshexec.Result{}, risk, apperrors.New(apperrors.CodeUsageError, "--reason is required for R1-R3 commands", nil)
+		reasonErr := missingReasonError(risk.Effective)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", reasonErr, srvgovaudit.EventTypeAuthorizationDenied)
+		return sshexec.Result{}, risk, reasonErr
 	}
 
-	operator := resolveOperator(f.Operator)
 	authErr := safety.Authorize(risk.Effective, safety.Options{
 		Yes:                f.Yes,
 		NonInteractive:     f.NonInteractive,

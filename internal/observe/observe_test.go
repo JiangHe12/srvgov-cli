@@ -98,6 +98,26 @@ func TestParseStatusAllowsPartialData(t *testing.T) {
 	}
 }
 
+func TestParseStatusKeepsUniqueBlockDevicesOnly(t *testing.T) {
+	t.Parallel()
+
+	got := ParseStatus(map[string]string{
+		"disk": "Filesystem 1024-blocks Used Available Capacity Mounted on\n" +
+			"overlay 1000 400 600 40% /var/lib/docker/overlay2/abc/merged\n" +
+			"tmpfs 100 1 99 1% /run\n" +
+			"/dev/mapper/centos-root 2000 1000 1000 50% /\n" +
+			"/dev/mapper/centos-root 2000 1000 1000 50% /var/lib/docker/bind\n" +
+			"/dev/sdb1 3000 1000 2000 33% /data\n",
+	})
+
+	if len(got.Disk) != 2 {
+		t.Fatalf("disk = %#v, want two unique block devices", got.Disk)
+	}
+	if got.Disk[0].Mount != "/" || got.Disk[1].Mount != "/data" {
+		t.Fatalf("disk = %#v", got.Disk)
+	}
+}
+
 func TestParsePortsSupportsSSAndNetstat(t *testing.T) {
 	t.Parallel()
 
@@ -162,5 +182,24 @@ func TestParseLogsRedactsStructuredFields(t *testing.T) {
 	fileLines := ParseFileLines("user=bob password=file-secret\nnormal line\n", "password")
 	if len(fileLines) != 1 || strings.Contains(fileLines[0].Message, "file-secret") {
 		t.Fatalf("ParseFileLines() = %#v", fileLines)
+	}
+}
+
+func TestParseDockerLogsUsesTimestampAndFallsBackForMalformedLines(t *testing.T) {
+	t.Parallel()
+
+	lines := ParseDockerLines(
+		"2026-06-12T08:15:30.123456789Z ready password=docker-secret\n" +
+			"not-a-timestamp whole line\n",
+	)
+	if len(lines) != 2 {
+		t.Fatalf("ParseDockerLines() = %#v", lines)
+	}
+	if lines[0].Timestamp != "2026-06-12T08:15:30.123456789Z" ||
+		lines[0].Message != "ready password=[REDACTED]" {
+		t.Fatalf("timestamped line = %#v", lines[0])
+	}
+	if lines[1].Timestamp != "" || lines[1].Message != "not-a-timestamp whole line" {
+		t.Fatalf("fallback line = %#v", lines[1])
 	}
 }

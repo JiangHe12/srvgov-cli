@@ -64,10 +64,58 @@ func TestExecRequiresReasonBeforeAuthorization(t *testing.T) {
 	restore := replaceSSHRunner(runner)
 	t.Cleanup(restore)
 
-	_, err := executeRoot(t, configPath, "--non-interactive", "--yes", "exec", "touch ./ready")
+	_, err := executeRoot(t, configPath,
+		"--non-interactive", "--yes", "--ticket", "OPS-42",
+		"exec", "systemctl restart nginx",
+	)
 	assertAppError(t, err, apperrors.CodeUsageError, 1)
+	message := apperrors.AsAppError(err).Message
+	for _, flag := range []string{"--reason", "--yes", "--ticket"} {
+		if !strings.Contains(message, flag) {
+			t.Fatalf("message = %q, want %s", message, flag)
+		}
+	}
 	if runner.calls != 0 {
 		t.Fatalf("runner calls = %d, want 0", runner.calls)
+	}
+	events := readAuditEvents(t)
+	if len(events) != 1 ||
+		events[0].EventType != srvgovaudit.EventTypeAuthorizationDenied ||
+		events[0].Status != srvgovaudit.StatusDenied ||
+		events[0].RiskTier != "R2" {
+		t.Fatalf("audit events = %#v", events)
+	}
+}
+
+func TestMissingReasonReportsCompleteRequirementsByTier(t *testing.T) {
+	tests := []struct {
+		name    string
+		command string
+		flags   []string
+	}{
+		{name: "R1", command: "touch ./ready", flags: []string{"--reason", "--yes"}},
+		{name: "R2", command: "systemctl restart nginx", flags: []string{"--reason", "--yes", "--ticket"}},
+		{name: "R3", command: "rm -rf /tmp/release", flags: []string{"--reason", "--yes", "--ticket", "--allow-destructive"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := prepareExecContext(t, false)
+			runner := &fakeSSHRunner{}
+			restore := replaceSSHRunner(runner)
+			t.Cleanup(restore)
+
+			_, err := executeRoot(t, configPath, "--non-interactive", "exec", tt.command)
+			assertAppError(t, err, apperrors.CodeUsageError, 1)
+			message := apperrors.AsAppError(err).Message
+			for _, flag := range tt.flags {
+				if !strings.Contains(message, flag) {
+					t.Fatalf("message = %q, want %s", message, flag)
+				}
+			}
+			if runner.calls != 0 {
+				t.Fatalf("runner calls = %d, want 0", runner.calls)
+			}
+		})
 	}
 }
 
@@ -121,30 +169,39 @@ func TestExecR3RequiresAllowAndAuditsDenial(t *testing.T) {
 func TestExecRedactsCallerOutputAndAudit(t *testing.T) {
 	configPath := prepareExecContext(t, false)
 	runner := &fakeSSHRunner{result: sshexec.Result{
-		Stdout:   "password=stdout-secret\n",
-		Stderr:   "secretKey: stderr-secret\n",
+		Stdout:   "PRIVATE_KEY=stdout-private API_KEY=stdout-api STRIPE_KEY=stdout-stripe cookie=stdout-cookie\n",
+		Stderr:   "credential=stderr-credential sessionid=stderr-session\n",
 		ExitCode: 0,
 	}}
 	restore := replaceSSHRunner(runner)
 	t.Cleanup(restore)
 
-	output, err := executeRoot(t, configPath, "-o", "json", "exec", "echo password=command-secret")
+	output, err := executeRoot(t, configPath, "-o", "json", "exec", "echo privatekey=command-private")
 	if err != nil {
 		t.Fatalf("exec error = %v", err)
 	}
-	for _, secret := range []string{"command-secret", "stdout-secret", "stderr-secret"} {
+	secrets := []string{
+		"command-private",
+		"stdout-private",
+		"stdout-api",
+		"stdout-stripe",
+		"stdout-cookie",
+		"stderr-credential",
+		"stderr-session",
+	}
+	for _, secret := range secrets {
 		if strings.Contains(output, secret) {
 			t.Fatalf("caller output leaked %q: %s", secret, output)
 		}
 	}
-	if runner.command != "echo password=command-secret" {
+	if runner.command != "echo privatekey=command-private" {
 		t.Fatalf("runner command = %q", runner.command)
 	}
 	auditData, err := os.ReadFile(defaultAuditPath(t))
 	if err != nil {
 		t.Fatalf("ReadFile(audit) error = %v", err)
 	}
-	for _, secret := range []string{"command-secret", "stdout-secret", "stderr-secret"} {
+	for _, secret := range secrets {
 		if bytes.Contains(auditData, []byte(secret)) {
 			t.Fatalf("audit leaked %q: %s", secret, auditData)
 		}
