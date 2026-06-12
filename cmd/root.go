@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +14,8 @@ import (
 
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
+
+var auditWarningMu sync.Mutex
 
 type cliFlags struct {
 	Output         string
@@ -81,6 +84,16 @@ func newPrinter(f *cliFlags) *printer.Printer {
 		errOut = os.Stderr
 	}
 	return printer.NewWithWriters(printer.Format(f.Output), out, errOut)
+}
+
+func warnAuditFailure(f *cliFlags, err error) {
+	writer := io.Writer(os.Stderr)
+	if f != nil && f.Err != nil {
+		writer = f.Err
+	}
+	auditWarningMu.Lock()
+	defer auditWarningMu.Unlock()
+	_, _ = fmt.Fprintf(writer, "warning: failed to write audit log: %v\n", err)
 }
 
 func requireExactArgs(name string) cobra.PositionalArgs {

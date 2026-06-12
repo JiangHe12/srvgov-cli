@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## v0.6.1
+
+### Fixed
+
+- Audit path resolution and append failures now emit a stderr warning without
+  replacing the governed command's original result or exit code, including
+  fanout and file-write execution paths.
+
 ## v0.6.0
 
 ### Added

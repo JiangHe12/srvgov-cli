@@ -223,6 +223,7 @@ func authorizeExecFanout(
 			continue
 		}
 		appendExecAudit(
+			f,
 			plan.Target.Value,
 			plan.Target.Name,
 			operator,
@@ -316,6 +317,7 @@ func printExecResult(f *cliFlags, view execResultView) error {
 }
 
 func appendExecAudit(
+	f *cliFlags,
 	item srvgovctx.Context,
 	contextName, operator, ticket, reason, command string,
 	risk safety.Risk,
@@ -327,6 +329,7 @@ func appendExecAudit(
 ) {
 	path, err := coreaudit.DefaultPath()
 	if err != nil {
+		warnAuditFailure(f, err)
 		return
 	}
 	var errorInfo *srvgovaudit.ErrorInfo
@@ -334,7 +337,7 @@ func appendExecAudit(
 		appErr := apperrors.AsAppError(eventErr)
 		errorInfo = &srvgovaudit.ErrorInfo{Code: string(appErr.Code), Message: appErr.Message}
 	}
-	_ = srvgovaudit.Append(path, srvgovaudit.Event{
+	if err := srvgovaudit.Append(path, srvgovaudit.Event{
 		EventType: eventType,
 		Operator:  operator,
 		Context: srvgovaudit.Context{
@@ -355,10 +358,13 @@ func appendExecAudit(
 	}, coreaudit.Options{
 		MaxSizeBytes:         item.AuditMaxSize,
 		EncryptPublicKeyPath: item.AuditEncryptKey,
-	})
+	}); err != nil {
+		warnAuditFailure(f, err)
+	}
 }
 
 func appendFileWriteAudit(
+	f *cliFlags,
 	item srvgovctx.Context,
 	contextName, operator, ticket, reason, command string,
 	risk safety.Risk,
@@ -370,6 +376,7 @@ func appendFileWriteAudit(
 ) {
 	path, err := coreaudit.DefaultPath()
 	if err != nil {
+		warnAuditFailure(f, err)
 		return
 	}
 	var errorInfo *srvgovaudit.ErrorInfo
@@ -377,7 +384,7 @@ func appendFileWriteAudit(
 		appErr := apperrors.AsAppError(eventErr)
 		errorInfo = &srvgovaudit.ErrorInfo{Code: string(appErr.Code), Message: appErr.Message}
 	}
-	_ = srvgovaudit.Append(path, srvgovaudit.Event{
+	if err := srvgovaudit.Append(path, srvgovaudit.Event{
 		EventType: srvgovaudit.EventTypeFileWrite,
 		Operator:  operator,
 		Context: srvgovaudit.Context{
@@ -398,7 +405,9 @@ func appendFileWriteAudit(
 	}, coreaudit.Options{
 		MaxSizeBytes:         item.AuditMaxSize,
 		EncryptPublicKeyPath: item.AuditEncryptKey,
-	})
+	}); err != nil {
+		warnAuditFailure(f, err)
+	}
 }
 
 func requiredAllowFlags(risk safety.Risk) []safety.AllowFlag {

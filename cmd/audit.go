@@ -88,17 +88,17 @@ func runAuditQuery(f *cliFlags, opts auditQueryOptions) error {
 	}
 	path, err := auditPath(opts.path)
 	if err != nil {
-		emitAudit(auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), err)
+		emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), err)
 		return err
 	}
 	filter, err := auditRawFilter(opts)
 	if err != nil {
-		emitAudit(auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), err)
+		emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), err)
 		return err
 	}
 	raw, err := coreaudit.QueryRaw(path, filter)
 	if err != nil {
-		emitAudit(auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), err)
+		emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), err)
 		return err
 	}
 	result := auditQueryResult{Events: []srvgovaudit.Event{}, Malformed: raw.MalformedEntries}
@@ -120,7 +120,7 @@ func runAuditQuery(f *cliFlags, opts auditQueryOptions) error {
 	if opts.limit > 0 && len(result.Events) > opts.limit {
 		result.Events = result.Events[:opts.limit]
 	}
-	emitAudit(auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), nil)
+	emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), nil)
 	return printAuditQuery(f, result)
 }
 
@@ -130,17 +130,17 @@ func runAuditVerify(f *cliFlags, opts auditVerifyOptions) error {
 	}
 	path, err := auditPath(opts.path)
 	if err != nil {
-		emitAudit(auditCommandEvent(f, srvgovaudit.EventTypeAuditVerify), err)
+		emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditVerify), err)
 		return err
 	}
 	result, err := coreaudit.Verify(path, coreaudit.VerifyOptions{})
 	strictErr := strictVerifyError(result, opts.strict)
 	event := auditCommandEvent(f, srvgovaudit.EventTypeAuditVerify)
 	if err != nil {
-		emitAudit(event, err)
+		emitAudit(f, event, err)
 		return err
 	}
-	emitAudit(event, strictErr)
+	emitAudit(f, event, strictErr)
 	if printErr := printAuditVerify(f, result); printErr != nil {
 		return printErr
 	}
@@ -270,9 +270,10 @@ func authorizeRead(f *cliFlags) error {
 	})
 }
 
-func emitAudit(event srvgovaudit.Event, eventErr error) {
+func emitAudit(f *cliFlags, event srvgovaudit.Event, eventErr error) {
 	path, err := coreaudit.DefaultPath()
 	if err != nil {
+		warnAuditFailure(f, err)
 		return
 	}
 	if eventErr != nil {
@@ -280,5 +281,7 @@ func emitAudit(event srvgovaudit.Event, eventErr error) {
 		event.Status = srvgovaudit.StatusFailed
 		event.Error = &srvgovaudit.ErrorInfo{Code: string(appErr.Code), Message: appErr.Message}
 	}
-	_ = srvgovaudit.Append(path, event, coreaudit.Options{})
+	if err := srvgovaudit.Append(path, event, coreaudit.Options{}); err != nil {
+		warnAuditFailure(f, err)
+	}
 }

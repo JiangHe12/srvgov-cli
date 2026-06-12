@@ -92,7 +92,7 @@ func runCtxRoleSet(f *cliFlags, contextName string, opts roleOptions) error {
 	}
 	event := roleAuditEvent(f, srvgovaudit.EventTypeRoleAssign, contextName, opts.targetOperator)
 	event.Command = opts.role
-	emitAudit(event, nil)
+	emitAudit(f, event, nil)
 	newPrinter(f).Success(fmt.Sprintf("role %q assigned to %q in context %q", opts.role, opts.targetOperator, contextName))
 	return nil
 }
@@ -114,7 +114,7 @@ func runCtxRoleUnset(f *cliFlags, contextName string, opts roleOptions) error {
 	if err := srvgovctx.SetContext(contextName, item); err != nil {
 		return err
 	}
-	emitAudit(roleAuditEvent(f, srvgovaudit.EventTypeRoleRevoke, contextName, opts.targetOperator), nil)
+	emitAudit(f, roleAuditEvent(f, srvgovaudit.EventTypeRoleRevoke, contextName, opts.targetOperator), nil)
 	newPrinter(f).Success(fmt.Sprintf("role removed from %q in context %q", opts.targetOperator, contextName))
 	return nil
 }

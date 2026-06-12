@@ -101,7 +101,7 @@ func runCtxExport(f *cliFlags, name string, opts ctxExportOptions) error {
 	if _, err := out.Write(data); err != nil {
 		return apperrors.New(apperrors.CodeLocalIOError, "failed to write context export", err)
 	}
-	emitAudit(contextAuditEvent(f, srvgovaudit.EventTypeContextExport, name, item), nil)
+	emitAudit(f, contextAuditEvent(f, srvgovaudit.EventTypeContextExport, name, item), nil)
 	return nil
 }
 
@@ -156,7 +156,7 @@ func runCtxImport(f *cliFlags, opts ctxImportOptions) error {
 	if err := srvgovctx.SetContext(name, doc.Context); err != nil {
 		return err
 	}
-	emitAudit(contextAuditEvent(f, srvgovaudit.EventTypeContextImport, name, doc.Context), nil)
+	emitAudit(f, contextAuditEvent(f, srvgovaudit.EventTypeContextImport, name, doc.Context), nil)
 	result := contextImportResult{
 		Name:                 name,
 		PasswordRedacted:     passwordRedacted,

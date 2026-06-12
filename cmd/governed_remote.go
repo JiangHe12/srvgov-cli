@@ -49,13 +49,13 @@ func runGovernedCommandWithStdin(
 		Operator:           operator,
 	})
 	if authErr != nil {
-		appendExecAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, srvgovaudit.EventTypeAuthorizationDenied)
 		return sshexec.Result{}, risk, authErr
 	}
 
 	result, runErr := newSSHStdinRunner().RunWithStdin(cmd.Context(), contextName, item, command, stdin)
 	if runErr != nil {
-		appendFileWriteAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, result.Stderr, runErr, fileInfo())
+		appendFileWriteAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, result.Stderr, runErr, fileInfo())
 		return sshexec.Result{}, risk, runErr
 	}
 	if result.ExitCode != 0 {
@@ -64,11 +64,11 @@ func runGovernedCommandWithStdin(
 			fmt.Sprintf("remote command exited with status %d", result.ExitCode),
 			nil,
 		)
-		appendFileWriteAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stderr, resultErr, fileInfo())
+		appendFileWriteAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stderr, resultErr, fileInfo())
 		return result, risk, resultErr
 	}
 
-	appendFileWriteAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stderr, nil, fileInfo())
+	appendFileWriteAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stderr, nil, fileInfo())
 	return result, risk, nil
 }
 
@@ -113,13 +113,13 @@ func runGovernedCommand(
 		Operator:           operator,
 	})
 	if authErr != nil {
-		appendExecAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, srvgovaudit.EventTypeAuthorizationDenied)
 		return sshexec.Result{}, risk, authErr
 	}
 
 	result, runErr := newSSHRunner().Run(cmd.Context(), contextName, item, command)
 	if runErr != nil {
-		appendExecAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, "", "", runErr, eventType)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, "", "", runErr, eventType)
 		return sshexec.Result{}, risk, runErr
 	}
 
@@ -129,10 +129,10 @@ func runGovernedCommand(
 			fmt.Sprintf("remote command exited with status %d", result.ExitCode),
 			nil,
 		)
-		appendExecAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stdout, result.Stderr, resultErr, eventType)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stdout, result.Stderr, resultErr, eventType)
 		return result, risk, resultErr
 	}
 
-	appendExecAudit(item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stdout, result.Stderr, nil, eventType)
+	appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stdout, result.Stderr, nil, eventType)
 	return result, risk, nil
 }

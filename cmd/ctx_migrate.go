@@ -81,7 +81,7 @@ func runCtxMigrateCredentials(f *cliFlags, opts migrateCredentialsOptions) error
 		if err := srvgovctx.SetContext(candidate.name, item); err != nil {
 			return err
 		}
-		emitAudit(credentialMigrateAuditEvent(f, candidate.name, opts.toBackend), nil)
+		emitAudit(f, credentialMigrateAuditEvent(f, candidate.name, opts.toBackend), nil)
 	}
 	result := map[string]any{"migrated": len(candidates), "backend": opts.toBackend}
 	p := newPrinter(f)

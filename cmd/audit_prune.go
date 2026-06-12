@@ -74,11 +74,11 @@ func runAuditPrune(f *cliFlags, opts auditPruneOptions) error {
 		for _, filePath := range candidates {
 			if err := os.Remove(filePath); err != nil {
 				opErr := apperrors.New(apperrors.CodeLocalIOError, "failed to delete rotated audit log", err)
-				emitAudit(event, opErr)
+				emitAudit(f, event, opErr)
 				return opErr
 			}
 		}
-		emitAudit(event, nil)
+		emitAudit(f, event, nil)
 	}
 	return printAuditPrune(f, auditPruneResult{
 		DryRun: !opts.confirm,
