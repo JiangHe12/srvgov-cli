@@ -33,7 +33,7 @@
       "dryRun": true,
       "tofu": "strict SSH host-key fingerprint pinning",
       "redaction": "command, stdout, stderr, and audit fields are redacted",
-      "fanout": "status and ports require R0 for every target; exec authorizes every target before any execution"
+      "fanout": "status and ports require R0 for every target; exec, svc, file, and docker authorize every target before any execution"
     },
     "commands": [
       "ctx",

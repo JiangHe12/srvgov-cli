@@ -56,6 +56,40 @@ func bindFanoutFlags(command *cobra.Command, flags *fanoutFlags) {
 	command.Flags().IntVar(&flags.Concurrency, "concurrency", defaultFanoutConcurrency, "Maximum concurrent targets")
 }
 
+func fanoutDryRunResults(plans []governedFanoutPlan, command string) []fanout.Result {
+	results := make([]fanout.Result, 0, len(plans))
+	for _, plan := range plans {
+		results = append(results, fanout.Result{
+			Target: plan.Target.Name,
+			Host:   plan.Target.Host,
+			Data: execDryRunView{
+				Context:               plan.Target.Name,
+				Host:                  plan.Target.Host,
+				Command:               redact.String(command),
+				RiskTier:              riskName(plan.Risk.Base),
+				EffectiveRiskTier:     riskName(plan.Risk.Effective),
+				RequiredAuthorization: requiredAuthorization(plan.Risk.Effective),
+				DryRun:                true,
+			},
+		})
+	}
+	return results
+}
+
+func printFanoutDryRun(
+	cmd *cobra.Command,
+	f *cliFlags,
+	targets []fanout.Target[srvgovctx.Context],
+	concurrency int,
+	plans []governedFanoutPlan,
+	command string,
+	maxEffective safety.Risk,
+) error {
+	view := buildFanoutView(targets, concurrency, fanoutDryRunResults(plans, command))
+	view.MaxEffectiveRiskTier = riskName(maxEffective)
+	return printFanout(cmd, f, view)
+}
+
 func runReadOnlyObservation[T any](
 	cmd *cobra.Command,
 	f *cliFlags,

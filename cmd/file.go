@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -16,8 +18,10 @@ import (
 	"github.com/JiangHe12/opskit-core/apperrors"
 	"github.com/JiangHe12/opskit-core/redact"
 
+	"github.com/JiangHe12/srvgov-cli/internal/fanout"
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
+	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 	"github.com/JiangHe12/srvgov-cli/internal/sshexec"
 )
 
@@ -69,6 +73,8 @@ func newFileCmd(f *cliFlags) *cobra.Command {
 		content  string
 		reason   string
 		allow    bool
+		dryRun   bool
+		flags    fanoutFlags
 	)
 	command := &cobra.Command{
 		Use:   "file <read|stat|list|write> <path>",
@@ -87,20 +93,47 @@ func newFileCmd(f *cliFlags) *cobra.Command {
 				if contentSet {
 					return apperrors.New(apperrors.CodeUsageError, "--content is only valid with file write", nil)
 				}
+				if maxBytes <= 0 || maxBytes > maxFileReadMaxBytes {
+					return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("--max-bytes must be between 1 and %d", maxFileReadMaxBytes), nil)
+				}
+				if cmd.Flags().Changed("targets") {
+					return runFileReadFanout(cmd, f, flags, action, args[1], maxBytes, dryRun)
+				}
+				if dryRun {
+					return runFileDryRun(f, fileReadCommand(args[1], maxBytes))
+				}
 				return runFileRead(cmd, f, args[1], maxBytes)
 			case "stat":
 				if contentSet {
 					return apperrors.New(apperrors.CodeUsageError, "--content is only valid with file write", nil)
+				}
+				if cmd.Flags().Changed("targets") {
+					return runFileReadFanout(cmd, f, flags, action, args[1], maxBytes, dryRun)
+				}
+				if dryRun {
+					return runFileDryRun(f, fileStatCommand(args[1]))
 				}
 				return runFileStat(cmd, f, args[1])
 			case "list":
 				if contentSet {
 					return apperrors.New(apperrors.CodeUsageError, "--content is only valid with file write", nil)
 				}
+				if cmd.Flags().Changed("targets") {
+					return runFileReadFanout(cmd, f, flags, action, args[1], maxBytes, dryRun)
+				}
+				if dryRun {
+					return runFileDryRun(f, fileListCommand(args[1]))
+				}
 				return runFileList(cmd, f, args[1])
 			case "write":
-				if !contentSet && !f.Yes {
+				if !dryRun && !contentSet && !f.Yes {
 					return apperrors.New(apperrors.CodeUsageError, "reading content from stdin requires --yes", nil)
+				}
+				if cmd.Flags().Changed("targets") {
+					return runFileWriteFanout(cmd, f, flags, args[1], content, contentSet, reason, allow, dryRun)
+				}
+				if dryRun {
+					return runFileDryRun(f, fileWriteCommand(args[1]))
 				}
 				return runFileWrite(cmd, f, args[1], content, contentSet, reason, allow)
 			default:
@@ -112,7 +145,142 @@ func newFileCmd(f *cliFlags) *cobra.Command {
 	command.Flags().StringVar(&content, "content", "", "Literal content for file write; takes precedence over stdin")
 	command.Flags().StringVar(&reason, "reason", "", "Human reason for a governed file write")
 	command.Flags().BoolVar(&allow, "allow-destructive", false, "Explicitly allow an authorized R3 file write")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "Classify and show required authorization without connecting")
+	bindFanoutFlags(command, &flags)
 	return command
+}
+
+func runFileDryRun(f *cliFlags, command string) error {
+	item, contextName, err := loadSelectedContext(f.Context)
+	if err != nil {
+		return err
+	}
+	risk := classifyGovernedCommand(*item, contextName, command)
+	return printExecDryRun(f, contextName, *item, command, risk.Base, risk.Effective)
+}
+
+func runFileReadFanout(
+	cmd *cobra.Command,
+	f *cliFlags,
+	flags fanoutFlags,
+	action, path string,
+	maxBytes int,
+	dryRun bool,
+) error {
+	if action == "read" && (maxBytes <= 0 || maxBytes > maxFileReadMaxBytes) {
+		return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("--max-bytes must be between 1 and %d", maxFileReadMaxBytes), nil)
+	}
+	targets, err := loadFanoutTargets(flags.Targets, cmd.Flags().Changed("context"), flags.Concurrency)
+	if err != nil {
+		return err
+	}
+	command, eventType, tool := fileReadGovernedCommand(action, path, maxBytes)
+	plans, maxEffective := planGovernedFanout(targets, command)
+	if dryRun {
+		return printFanoutDryRun(cmd, f, targets, flags.Concurrency, plans, command, maxEffective)
+	}
+	if err := authorizeGovernedFanout(cmd, f, plans, command, "", false, maxEffective); err != nil {
+		return err
+	}
+	results := fanout.Run(cmd.Context(), targets, flags.Concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
+		targetFlags := *f
+		targetFlags.NonInteractive = true
+		result, runErr := runFileReadCommandTarget(cmd, &targetFlags, target.Value, target.Name, path, command, eventType, tool)
+		if runErr != nil {
+			return nil, runErr
+		}
+		return fileReadData(action, path, maxBytes, result.Stdout)
+	})
+	return printFanout(cmd, f, buildFanoutView(targets, flags.Concurrency, results))
+}
+
+func fileReadGovernedCommand(action, path string, maxBytes int) (string, srvgovaudit.EventType, string) {
+	switch action {
+	case "read":
+		return fileReadCommand(path, maxBytes), srvgovaudit.EventTypeFileRead, "head"
+	case "stat":
+		return fileStatCommand(path), srvgovaudit.EventTypeFileStat, "stat"
+	default:
+		return fileListCommand(path), srvgovaudit.EventTypeFileList, "find"
+	}
+}
+
+func fileReadData(action, path string, maxBytes int, output string) (any, error) {
+	switch action {
+	case "read":
+		data := []byte(output)
+		truncated := len(data) > maxBytes
+		if truncated {
+			data = data[:maxBytes]
+		}
+		return fileReadView{
+			Path:      redact.String(path),
+			Content:   redact.String(string(data)),
+			Bytes:     len(data),
+			Truncated: truncated,
+		}, nil
+	case "stat":
+		return parseFileStat(path, output)
+	default:
+		return parseFileList(output)
+	}
+}
+
+func runFileWriteFanout(
+	cmd *cobra.Command,
+	f *cliFlags,
+	flags fanoutFlags,
+	path, content string,
+	contentSet bool,
+	reason string,
+	allow, dryRun bool,
+) error {
+	targets, err := loadFanoutTargets(flags.Targets, cmd.Flags().Changed("context"), flags.Concurrency)
+	if err != nil {
+		return err
+	}
+	command := fileWriteCommand(path)
+	plans, maxEffective := planGovernedFanout(targets, command)
+	if dryRun {
+		return printFanoutDryRun(cmd, f, targets, flags.Concurrency, plans, command, maxEffective)
+	}
+	if err := authorizeGovernedFanout(cmd, f, plans, command, reason, allow, maxEffective); err != nil {
+		return err
+	}
+	var data []byte
+	if contentSet {
+		data = []byte(content)
+	} else {
+		data, err = io.ReadAll(cmd.InOrStdin())
+		if err != nil {
+			return apperrors.New(apperrors.CodeLocalIOError, "failed to read file content from stdin", err)
+		}
+	}
+	results := fanout.Run(cmd.Context(), targets, flags.Concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
+		targetFlags := *f
+		targetFlags.NonInteractive = true
+		tracker := &fileWriteTracker{reader: bytes.NewReader(data), hash: sha256.New()}
+		result, runErr := runGovernedCommandWithStdin(
+			cmd,
+			&targetFlags,
+			target.Value,
+			target.Name,
+			command,
+			reason,
+			allow,
+			tracker,
+			func() *srvgovaudit.FileInfo { return tracker.fileInfo(path) },
+		)
+		if runErr != nil && result.ExitCode == 0 {
+			return nil, runErr
+		}
+		return fileWriteView{
+			Path:         redact.String(path),
+			BytesWritten: tracker.bytes,
+			Success:      runErr == nil,
+		}, runErr
+	})
+	return printFanout(cmd, f, buildFanoutView(targets, flags.Concurrency, results))
 }
 
 func runFileRead(cmd *cobra.Command, f *cliFlags, path string, maxBytes int) error {
@@ -171,7 +339,18 @@ func runFileReadCommand(
 	if err != nil {
 		return sshexec.Result{}, err
 	}
-	result, _, runErr := runGovernedCommand(cmd, f, *item, contextName, command, "", false, eventType)
+	return runFileReadCommandTarget(cmd, f, *item, contextName, path, command, eventType, tool)
+}
+
+func runFileReadCommandTarget(
+	cmd *cobra.Command,
+	f *cliFlags,
+	item srvgovctx.Context,
+	contextName, path, command string,
+	eventType srvgovaudit.EventType,
+	tool string,
+) (sshexec.Result, error) {
+	result, _, runErr := runGovernedCommand(cmd, f, item, contextName, command, "", false, eventType)
 	if runErr == nil {
 		return result, nil
 	}
@@ -206,7 +385,7 @@ func runFileWrite(
 	}
 	tracker := &fileWriteTracker{reader: source, hash: sha256.New()}
 	command := fileWriteCommand(path)
-	result, _, runErr := runGovernedCommandWithStdin(
+	result, runErr := runGovernedCommandWithStdin(
 		cmd,
 		f,
 		*item,

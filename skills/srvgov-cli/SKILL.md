@@ -93,15 +93,19 @@ srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
 srvgov ports --targets web-a,web-b,web-c -o json
 srvgov exec --targets web-a,web-b,web-c "uptime" -o json
 srvgov exec --targets web-a,web-b,web-c --dry-run "systemctl restart nginx" -o json
+srvgov svc restart nginx --targets web-a,web-b,web-c --dry-run -o json
+srvgov file stat /etc/hosts --targets web-a,web-b,web-c -o json
+srvgov docker restart api --targets web-a,web-b,web-c --dry-run -o json
 ```
 
 `status` and `ports` have a hard effective-risk ceiling of R0. Multi-target
-`exec` first authorizes every target non-interactively and starts no SSH work
-unless all targets pass. Human-supplied reason, ticket, confirmation, and allow
-flags are reused but validated independently against every context's effective
-risk, ticket pattern, and RBAC. Never synthesize those values. Use dry-run to
-inspect each target's effective risk and `maxEffectiveRiskTier`; dry-run does
-not authorize or connect. Results are target-sorted, remote failures are
+`exec`, `svc`, `file`, and `docker` first authorize every target
+non-interactively and start no SSH work unless all targets pass. Human-supplied
+reason, ticket, confirmation, and allow flags are reused but validated
+independently against every context's effective risk, ticket pattern, and
+RBAC. Never synthesize those values. Use each command's `--dry-run` to inspect
+every target's effective risk and `maxEffectiveRiskTier`; dry-run does not
+authorize, connect, or audit. Results are target-sorted, remote failures are
 isolated, and each target is audited separately. `--targets` and `--context`
 cannot be combined.
 
@@ -112,6 +116,7 @@ Use the fixed `svc` verbs instead of constructing raw systemctl actions:
 ```bash
 srvgov svc status nginx -o json
 srvgov svc restart nginx --reason "apply reviewed configuration" --ticket OPS-123 --yes -o json
+srvgov svc restart nginx --targets web-a,web-b --reason "apply reviewed configuration" --ticket OPS-123 --yes -o json
 ```
 
 `svc status` is an audited R0 read. `start`, `stop`, `restart`, `reload`,
@@ -129,6 +134,7 @@ Use governed structured reads before changing a file:
 srvgov file read /etc/hosts --max-bytes 1048576 -o json
 srvgov file stat /etc/hosts -o json
 srvgov file list /var/log -o json
+srvgov file stat /etc/hosts --targets web-a,web-b -o json
 ```
 
 These are audited R0 commands. Returned content and structured fields are
@@ -138,6 +144,8 @@ For a human-authorized write:
 
 ```bash
 srvgov file write /tmp/app.conf --content "enabled=true" \
+  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
+srvgov file write /tmp/app.conf --content "enabled=true" --targets web-a,web-b \
   --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
 ```
 
@@ -156,6 +164,7 @@ Use structured reads before a container lifecycle change:
 srvgov docker list -o json
 srvgov docker inspect api -o json
 srvgov docker logs api --tail 100 -o json
+srvgov docker inspect api --targets web-a,web-b -o json
 ```
 
 These are audited R0 operations. Inspect returns only the fixed safe field
@@ -165,6 +174,8 @@ Lifecycle operations are fixed to start, stop, restart, and rm:
 
 ```bash
 srvgov docker restart api \
+  --reason "restart after reviewed deployment" --ticket OPS-123 --yes -o json
+srvgov docker restart api --targets web-a,web-b \
   --reason "restart after reviewed deployment" --ticket OPS-123 --yes -o json
 ```
 

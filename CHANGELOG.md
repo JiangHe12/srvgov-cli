@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## v0.7.0
+
+### Added
+
+- Added authorize-all `--targets` and bounded `--concurrency` fanout to every
+  `svc`, `file`, and `docker` action, including per-target risk/audit handling
+  and no-connect multi-target dry-run previews.
+- File-write fanout authorizes every target before reading or sending content,
+  then uses independent readers and SHA-256 audit trackers per target.
+
 ## v0.6.4
 
 ### Security

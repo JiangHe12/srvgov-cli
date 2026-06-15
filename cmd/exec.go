@@ -55,10 +55,12 @@ type execResultView struct {
 	ExitCode int    `json:"exitCode"`
 }
 
-type execFanoutPlan struct {
+type governedFanoutPlan struct {
 	Target fanout.Target[srvgovctx.Context]
 	Risk   governedRisk
 }
+
+type execFanoutPlan = governedFanoutPlan
 
 func newExecCmd(f *cliFlags) *cobra.Command {
 	var reason string
@@ -181,14 +183,18 @@ func runExec(
 }
 
 func planExecFanout(targets []fanout.Target[srvgovctx.Context], command string) ([]execFanoutPlan, safety.Risk) {
-	plans := make([]execFanoutPlan, 0, len(targets))
+	return planGovernedFanout(targets, command)
+}
+
+func planGovernedFanout(targets []fanout.Target[srvgovctx.Context], command string) ([]governedFanoutPlan, safety.Risk) {
+	plans := make([]governedFanoutPlan, 0, len(targets))
 	maxEffective := safety.R0
 	for _, target := range targets {
 		risk := classifyGovernedCommand(target.Value, target.Name, command)
 		if risk.Effective > maxEffective {
 			maxEffective = risk.Effective
 		}
-		plans = append(plans, execFanoutPlan{Target: target, Risk: risk})
+		plans = append(plans, governedFanoutPlan{Target: target, Risk: risk})
 	}
 	return plans, maxEffective
 }
@@ -197,6 +203,17 @@ func authorizeExecFanout(
 	cmd *cobra.Command,
 	f *cliFlags,
 	plans []execFanoutPlan,
+	command, reason string,
+	allow bool,
+	maxEffective safety.Risk,
+) error {
+	return authorizeGovernedFanout(cmd, f, plans, command, reason, allow, maxEffective)
+}
+
+func authorizeGovernedFanout(
+	cmd *cobra.Command,
+	f *cliFlags,
+	plans []governedFanoutPlan,
 	command, reason string,
 	allow bool,
 	maxEffective safety.Risk,

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -13,8 +14,10 @@ import (
 	"github.com/JiangHe12/opskit-core/apperrors"
 	"github.com/JiangHe12/opskit-core/redact"
 
+	"github.com/JiangHe12/srvgov-cli/internal/fanout"
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
+	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 	"github.com/JiangHe12/srvgov-cli/internal/sshexec"
 )
 
@@ -115,6 +118,8 @@ func newDockerCmd(f *cliFlags) *cobra.Command {
 		tail   int
 		reason string
 		allow  bool
+		dryRun bool
+		flags  fanoutFlags
 	)
 	command := &cobra.Command{
 		Use:   "docker <ps|list|inspect|logs|start|stop|restart|rm> [container]",
@@ -131,6 +136,12 @@ func newDockerCmd(f *cliFlags) *cobra.Command {
 				if len(args) != 1 {
 					return apperrors.New(apperrors.CodeUsageError, "docker ps/list does not accept a container", nil)
 				}
+				if cmd.Flags().Changed("targets") {
+					return runDockerFanout(cmd, f, flags, "list", "", tail, "", false, dryRun)
+				}
+				if dryRun {
+					return runDockerDryRun(f, dockerListCommand())
+				}
 				return runDockerList(cmd, f)
 			}
 			if len(args) != 2 {
@@ -138,12 +149,33 @@ func newDockerCmd(f *cliFlags) *cobra.Command {
 			}
 			switch action {
 			case "inspect":
+				if cmd.Flags().Changed("targets") {
+					return runDockerFanout(cmd, f, flags, action, args[1], tail, "", false, dryRun)
+				}
+				if dryRun {
+					return runDockerDryRun(f, dockerInspectCommand(args[1]))
+				}
 				return runDockerInspect(cmd, f, args[1])
 			case "logs":
+				if tail < 1 || tail > maxDockerLogTail {
+					return apperrors.New(apperrors.CodeUsageError, "--tail must be between 1 and 10000", nil)
+				}
+				if cmd.Flags().Changed("targets") {
+					return runDockerFanout(cmd, f, flags, action, args[1], tail, "", false, dryRun)
+				}
+				if dryRun {
+					return runDockerDryRun(f, dockerLogsCommand(args[1], tail))
+				}
 				return runDockerLogs(cmd, f, args[1], tail)
 			default:
 				if !dockerActions[action] {
 					return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("unsupported docker action %q", args[0]), nil)
+				}
+				if cmd.Flags().Changed("targets") {
+					return runDockerFanout(cmd, f, flags, action, args[1], tail, reason, allow, dryRun)
+				}
+				if dryRun {
+					return runDockerDryRun(f, dockerActionCommand(action, args[1]))
 				}
 				return runDockerAction(cmd, f, action, args[1], reason, allow)
 			}
@@ -152,7 +184,116 @@ func newDockerCmd(f *cliFlags) *cobra.Command {
 	command.Flags().IntVar(&tail, "tail", defaultDockerLogTail, "Maximum Docker log lines")
 	command.Flags().StringVar(&reason, "reason", "", "Human reason for a governed container change")
 	command.Flags().BoolVar(&allow, "allow-destructive", false, "Explicitly allow an authorized R3 container change")
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "Classify and show required authorization without connecting")
+	bindFanoutFlags(command, &flags)
 	return command
+}
+
+func runDockerDryRun(f *cliFlags, command string) error {
+	item, contextName, err := loadSelectedContext(f.Context)
+	if err != nil {
+		return err
+	}
+	risk := classifyGovernedCommand(*item, contextName, command)
+	return printExecDryRun(f, contextName, *item, command, risk.Base, risk.Effective)
+}
+
+func runDockerFanout(
+	cmd *cobra.Command,
+	f *cliFlags,
+	flags fanoutFlags,
+	action, container string,
+	tail int,
+	reason string,
+	allow, dryRun bool,
+) error {
+	if action == "logs" && (tail < 1 || tail > maxDockerLogTail) {
+		return apperrors.New(apperrors.CodeUsageError, "--tail must be between 1 and 10000", nil)
+	}
+	targets, err := loadFanoutTargets(flags.Targets, cmd.Flags().Changed("context"), flags.Concurrency)
+	if err != nil {
+		return err
+	}
+	command, eventType := dockerGovernedCommand(action, container, tail)
+	plans, maxEffective := planGovernedFanout(targets, command)
+	if dryRun {
+		return printFanoutDryRun(cmd, f, targets, flags.Concurrency, plans, command, maxEffective)
+	}
+	if err := authorizeGovernedFanout(cmd, f, plans, command, reason, allow, maxEffective); err != nil {
+		return err
+	}
+	results := fanout.Run(cmd.Context(), targets, flags.Concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
+		targetFlags := *f
+		targetFlags.NonInteractive = true
+		return runDockerTarget(cmd, &targetFlags, target.Value, target.Name, action, container, tail, reason, allow, command, eventType)
+	})
+	return printFanout(cmd, f, buildFanoutView(targets, flags.Concurrency, results))
+}
+
+func dockerGovernedCommand(action, container string, tail int) (string, srvgovaudit.EventType) {
+	switch action {
+	case "list":
+		return dockerListCommand(), srvgovaudit.EventTypeDockerList
+	case "inspect":
+		return dockerInspectCommand(container), srvgovaudit.EventTypeDockerInspect
+	case "logs":
+		return dockerLogsCommand(container, tail), srvgovaudit.EventTypeDockerLogs
+	default:
+		return dockerActionCommand(action, container), srvgovaudit.EventTypeDockerAction
+	}
+}
+
+func runDockerTarget(
+	cmd *cobra.Command,
+	f *cliFlags,
+	item srvgovctx.Context,
+	contextName, action, container string,
+	tail int,
+	reason string,
+	allow bool,
+	command string,
+	eventType srvgovaudit.EventType,
+) (any, error) {
+	result, _, runErr := runGovernedCommand(cmd, f, item, contextName, command, reason, allow, eventType)
+	if commandUnavailable(result) {
+		return nil, apperrors.New(apperrors.CodeResourceNotFound, "docker is not available", nil)
+	}
+	if action == "list" {
+		if runErr != nil {
+			return nil, runErr
+		}
+		return parseDockerList(result.Stdout)
+	}
+	if action == "inspect" {
+		if runErr != nil {
+			return nil, runErr
+		}
+		return parseDockerInspect(result.Stdout)
+	}
+	if action == "logs" {
+		if runErr != nil {
+			return nil, runErr
+		}
+		lines := observe.ParseDockerLines(result.Stdout, result.Stderr)
+		return dockerLogsView{
+			Lines: lines,
+			Meta: dockerLogsMeta{
+				Backend:        "docker",
+				Container:      redact.String(container),
+				RequestedLines: tail,
+				ReturnedLines:  len(lines),
+			},
+		}, nil
+	}
+	if runErr != nil && result.ExitCode == 0 {
+		return nil, runErr
+	}
+	return dockerActionView{
+		Container: redact.String(container),
+		Action:    action,
+		Success:   runErr == nil,
+		ExitCode:  result.ExitCode,
+	}, runErr
 }
 
 func runDockerList(cmd *cobra.Command, f *cliFlags) error {

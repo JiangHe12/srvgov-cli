@@ -29,13 +29,13 @@ func runGovernedCommandWithStdin(
 	allow bool,
 	stdin io.Reader,
 	fileInfo func() *srvgovaudit.FileInfo,
-) (sshexec.Result, governedRisk, error) {
+) (sshexec.Result, error) {
 	risk := classifyGovernedCommand(item, contextName, command)
 	operator := resolveOperator(f.Operator)
 	if risk.Effective >= safety.R1 && strings.TrimSpace(reason) == "" {
 		reasonErr := missingReasonError(risk.Effective)
 		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", reasonErr, srvgovaudit.EventTypeAuthorizationDenied)
-		return sshexec.Result{}, risk, reasonErr
+		return sshexec.Result{}, reasonErr
 	}
 
 	authErr := safety.Authorize(risk.Effective, safety.Options{
@@ -52,13 +52,13 @@ func runGovernedCommandWithStdin(
 	})
 	if authErr != nil {
 		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, srvgovaudit.EventTypeAuthorizationDenied)
-		return sshexec.Result{}, risk, authErr
+		return sshexec.Result{}, authErr
 	}
 
 	result, runErr := newSSHStdinRunner().RunWithStdin(cmd.Context(), contextName, item, command, stdin)
 	if runErr != nil {
 		appendFileWriteAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, result.Stderr, runErr, fileInfo())
-		return sshexec.Result{}, risk, runErr
+		return sshexec.Result{}, runErr
 	}
 	if result.ExitCode != 0 {
 		resultErr := apperrors.New(
@@ -67,11 +67,11 @@ func runGovernedCommandWithStdin(
 			nil,
 		)
 		appendFileWriteAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stderr, resultErr, fileInfo())
-		return result, risk, resultErr
+		return result, resultErr
 	}
 
 	appendFileWriteAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stderr, nil, fileInfo())
-	return result, risk, nil
+	return result, nil
 }
 
 func classifyGovernedCommand(item srvgovctx.Context, contextName, command string) governedRisk {
