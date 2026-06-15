@@ -1,6 +1,6 @@
 {
   "name": "srvgov-cli",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "description": "Governed remote server command execution CLI for AI agents",
   "bin": {
     "srvgov": "bin/srvgov-cli.js",
