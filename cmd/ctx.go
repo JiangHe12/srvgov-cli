@@ -3,21 +3,25 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/JiangHe12/opskit-core/apperrors"
 
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
 
 type contextView struct {
-	Name      string `json:"name"`
-	Server    string `json:"server"`
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	Username  string `json:"username,omitempty"`
-	Env       string `json:"env,omitempty"`
-	Protected bool   `json:"protected"`
-	Current   bool   `json:"current"`
+	Name      string            `json:"name"`
+	Server    string            `json:"server"`
+	Host      string            `json:"host"`
+	Port      int               `json:"port"`
+	Username  string            `json:"username,omitempty"`
+	Env       string            `json:"env,omitempty"`
+	Protected bool              `json:"protected"`
+	Current   bool              `json:"current"`
+	Labels    map[string]string `json:"labels,omitempty"`
 }
 
 func newContextCmd(f *cliFlags) *cobra.Command {
@@ -42,11 +46,17 @@ func newContextCmd(f *cliFlags) *cobra.Command {
 
 func ctxSetCmd(f *cliFlags) *cobra.Command {
 	var request srvgovctx.Context
+	var labels []string
 	command := &cobra.Command{
 		Use:   "set <name>",
 		Short: "Add or update a server context",
 		Args:  requireExactArgs("ctx set"),
 		RunE: func(_ *cobra.Command, args []string) error {
+			parsedLabels, err := parseLabelFlags(labels)
+			if err != nil {
+				return err
+			}
+			request.Labels = parsedLabels
 			if err := srvgovctx.SetContext(args[0], request); err != nil {
 				return err
 			}
@@ -67,6 +77,7 @@ func ctxSetCmd(f *cliFlags) *cobra.Command {
 	command.Flags().StringVar(&request.IdentityPassphrase, "identity-passphrase", "", "Private key passphrase or credstore reference")
 	command.Flags().StringSliceVar(&request.AuthMethods, "auth-method", nil, "Authentication preference: private-key, agent, password")
 	command.Flags().StringVar(&request.Env, "env", "", "Environment label")
+	command.Flags().StringArrayVar(&labels, "label", nil, "Context label key=value; repeat to set multiple labels")
 	command.Flags().BoolVar(&request.Protected, "protected", false, "Enable protected-context governance")
 	command.Flags().StringVar(&request.TicketPattern, "ticket-pattern", "", "Ticket regex pattern")
 	command.Flags().StringVar(&request.CredentialBackend, "credential-backend", "plain-yaml", "Credential backend")
@@ -117,6 +128,7 @@ func ctxListCmd(f *cliFlags) *cobra.Command {
 					fmt.Sprintf("%d", view.Port),
 					view.Username,
 					view.Env,
+					formatLabels(view.Labels),
 					fmt.Sprintf("%t", view.Current),
 				})
 			}
@@ -124,7 +136,7 @@ func ctxListCmd(f *cliFlags) *cobra.Command {
 			if f.Output == "json" {
 				return p.JSONList("ContextList", views, len(views), 1, len(views), false)
 			}
-			p.Table([]string{"NAME", "HOST", "PORT", "USERNAME", "ENV", "CURRENT"}, rows)
+			p.Table([]string{"NAME", "HOST", "PORT", "USERNAME", "ENV", "LABELS", "CURRENT"}, rows)
 			return nil
 		},
 	}
@@ -152,6 +164,7 @@ func ctxCurrentCmd(f *cliFlags) *cobra.Command {
 				{"Port", fmt.Sprintf("%d", view.Port)},
 				{"Username", view.Username},
 				{"Environment", view.Env},
+				{"Labels", formatLabels(view.Labels)},
 				{"Protected", fmt.Sprintf("%t", view.Protected)},
 			})
 			return nil
@@ -185,5 +198,50 @@ func makeContextView(name string, item srvgovctx.Context, current bool) contextV
 		Env:       item.Env,
 		Protected: item.Protected,
 		Current:   current,
+		Labels:    cloneLabels(item.Labels),
 	}
+}
+
+func parseLabelFlags(values []string) (map[string]string, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	labels := make(map[string]string, len(values))
+	for _, value := range values {
+		key, labelValue, ok := strings.Cut(value, "=")
+		key = strings.TrimSpace(key)
+		labelValue = strings.TrimSpace(labelValue)
+		if !ok || key == "" || labelValue == "" {
+			return nil, apperrors.New(apperrors.CodeUsageError, "--label must be key=value with non-empty key and value", nil)
+		}
+		labels[key] = labelValue
+	}
+	return labels, nil
+}
+
+func cloneLabels(labels map[string]string) map[string]string {
+	if len(labels) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(labels))
+	for key, value := range labels {
+		out[key] = value
+	}
+	return out
+}
+
+func formatLabels(labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(labels))
+	for key := range labels {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+labels[key])
+	}
+	return strings.Join(parts, ",")
 }

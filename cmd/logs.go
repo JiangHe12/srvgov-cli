@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/JiangHe12/opskit-core/apperrors"
 	"github.com/JiangHe12/opskit-core/redact"
 
+	"github.com/JiangHe12/srvgov-cli/internal/fanout"
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
@@ -33,12 +35,13 @@ type logsView struct {
 
 func newLogsCmd(f *cliFlags) *cobra.Command {
 	opts := observe.LogOptions{}
+	flags := fanoutFlags{Concurrency: defaultFanoutConcurrency}
 	command := &cobra.Command{
 		Use:   "logs",
 		Short: "Show structured journal or file logs",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runLogs(cmd, f, opts)
+			return runLogs(cmd, f, opts, flags)
 		},
 	}
 	command.Flags().StringVar(&opts.Unit, "unit", "", "systemd unit name")
@@ -47,32 +50,54 @@ func newLogsCmd(f *cliFlags) *cobra.Command {
 	command.Flags().IntVar(&opts.Lines, "lines", 100, "maximum log lines")
 	command.Flags().StringVar(&opts.Priority, "priority", "", "journal priority filter")
 	command.Flags().StringVar(&opts.Grep, "grep", "", "literal log text filter")
+	bindFanoutFlags(command, &flags)
 	return command
 }
 
-func runLogs(cmd *cobra.Command, f *cliFlags, opts observe.LogOptions) error {
+func runLogs(cmd *cobra.Command, f *cliFlags, opts observe.LogOptions, flags fanoutFlags) error {
 	if err := validateLogOptions(opts); err != nil {
 		return err
+	}
+	if fanoutRequested(cmd) {
+		targets, err := loadFanoutTargetsForCommand(cmd, flags)
+		if err != nil {
+			return err
+		}
+		if err := requireFanoutR0(targets, logCandidateCommands(opts)); err != nil {
+			return err
+		}
+		results := fanout.Run(cmd.Context(), targets, flags.Concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
+			return runLogsForTarget(cmd, f, target.Value, target.Name, opts)
+		})
+		return printFanout(cmd, f, buildFanoutView(targets, flags.Concurrency, results))
 	}
 	item, contextName, err := loadSelectedContext(f.Context)
 	if err != nil {
 		return err
 	}
-
-	var (
-		lines   []observe.LogLine
-		backend string
-	)
-	if opts.File != "" {
-		lines, backend, err = collectFileLogs(cmd, f, *item, contextName, opts)
-	} else {
-		lines, backend, err = collectJournalLogs(cmd, f, *item, contextName, opts)
-	}
+	view, err := runLogsForTarget(cmd, f, *item, contextName, opts)
 	if err != nil {
 		return err
 	}
+	return printLogs(f, view)
+}
 
-	view := logsView{
+func runLogsForTarget(cmd *cobra.Command, f *cliFlags, item srvgovctx.Context, contextName string, opts observe.LogOptions) (logsView, error) {
+	var (
+		lines   []observe.LogLine
+		backend string
+		err     error
+	)
+	if opts.File != "" {
+		lines, backend, err = collectFileLogs(cmd, f, item, contextName, opts)
+	} else {
+		lines, backend, err = collectJournalLogs(cmd, f, item, contextName, opts)
+	}
+	if err != nil {
+		return logsView{}, err
+	}
+
+	return logsView{
 		Lines: lines,
 		Meta: logsMeta{
 			Backend:        backend,
@@ -84,8 +109,18 @@ func runLogs(cmd *cobra.Command, f *cliFlags, opts observe.LogOptions) error {
 			RequestedLines: opts.Lines,
 			ReturnedLines:  len(lines),
 		},
+	}, nil
+}
+
+func logCandidateCommands(opts observe.LogOptions) []string {
+	if opts.File != "" {
+		return []string{observe.FileCommand(opts)}
 	}
-	return printLogs(f, view)
+	commands := []string{observe.JournalCommand(opts)}
+	if opts.Unit != "" {
+		commands = append(commands, observe.SystemctlCommand(opts))
+	}
+	return commands
 }
 
 func validateLogOptions(opts observe.LogOptions) error {

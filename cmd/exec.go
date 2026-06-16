@@ -66,21 +66,19 @@ func newExecCmd(f *cliFlags) *cobra.Command {
 	var reason string
 	var allow bool
 	var dryRun bool
-	var targets string
-	var concurrency int
+	flags := fanoutFlags{Concurrency: defaultFanoutConcurrency}
 	command := &cobra.Command{
 		Use:   "exec <command>",
 		Short: "Run one governed remote command",
 		Args:  requireExactArgs("exec"),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runExec(cmd, f, args[0], reason, allow, dryRun, targets, concurrency, cmd.Flags().Changed("targets"))
+			return runExec(cmd, f, args[0], reason, allow, dryRun, flags, fanoutRequested(cmd))
 		},
 	}
 	command.Flags().StringVar(&reason, "reason", "", "Human reason for a governed change")
 	command.Flags().BoolVar(&allow, "allow-destructive", false, "Explicitly allow an authorized R3 command")
 	command.Flags().BoolVar(&dryRun, "dry-run", false, "Classify and show required authorization without connecting")
-	command.Flags().StringVar(&targets, "targets", "", "Comma-separated server context names")
-	command.Flags().IntVar(&concurrency, "concurrency", defaultFanoutConcurrency, "Maximum concurrent targets")
+	bindFanoutFlags(command, &flags)
 	return command
 }
 
@@ -89,12 +87,11 @@ func runExec(
 	f *cliFlags,
 	command, reason string,
 	allow, dryRun bool,
-	rawTargets string,
-	concurrency int,
-	targetsSet bool,
+	flags fanoutFlags,
+	fanoutSet bool,
 ) error {
-	if targetsSet {
-		targets, err := loadFanoutTargets(rawTargets, cmd.Flags().Changed("context"), concurrency)
+	if fanoutSet {
+		targets, err := loadFanoutTargetsForCommand(cmd, flags)
 		if err != nil {
 			return err
 		}
@@ -116,14 +113,14 @@ func runExec(
 					},
 				})
 			}
-			view := buildFanoutView(targets, concurrency, results)
+			view := buildFanoutView(targets, flags.Concurrency, results)
 			view.MaxEffectiveRiskTier = riskName(maxEffective)
 			return printFanout(cmd, f, view)
 		}
 		if err := authorizeExecFanout(cmd, f, plans, command, reason, allow, maxEffective); err != nil {
 			return err
 		}
-		results := fanout.Run(cmd.Context(), targets, concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
+		results := fanout.Run(cmd.Context(), targets, flags.Concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
 			targetFlags := *f
 			targetFlags.NonInteractive = true
 			result, risk, resultErr := runGovernedCommand(
@@ -149,7 +146,7 @@ func runExec(
 				ExitCode: result.ExitCode,
 			}, nil
 		})
-		return printFanout(cmd, f, buildFanoutView(targets, concurrency, results))
+		return printFanout(cmd, f, buildFanoutView(targets, flags.Concurrency, results))
 	}
 	item, contextName, err := loadSelectedContext(f.Context)
 	if err != nil {

@@ -57,6 +57,8 @@ srvgov ctx set prod \
   --identity-file ~/.ssh/id_ed25519 \
   --auth-method private-key,agent,password \
   --env production \
+  --label env=prod \
+  --label role=web \
   --protected \
   -o json
 
@@ -74,6 +76,11 @@ srvgov ctx migrate-credentials --to encrypted-file --context prod -o json
 Context output never includes passwords, private-key contents, passphrases, or
 identity-file paths.
 
+`ctx set` accepts repeated `--label key=value` flags. Labels are non-secret
+metadata shown by `ctx list` and `ctx current`, exported/imported with portable
+contexts, and used by fanout `--selector`. A `ctx set` call replaces that
+context's label set with the labels supplied in the call.
+
 Portable context export uses `srvgov.io/ctx-export/v1`. Literal password and
 SSH identity passphrase values are redacted by default; credstore references are
 preserved. `--include-credentials` is limited to plain-yaml contexts.
@@ -86,6 +93,7 @@ The observation commands turn common read-only SSH output into stable JSON:
 srvgov status -o json
 srvgov ports -o json
 srvgov status --targets web-a,web-b --concurrency 5 -o json
+srvgov logs --targets web-a,web-b --unit nginx --lines 100 -o json
 srvgov logs --unit nginx --since "30 minutes ago" --priority warning --lines 100 -o json
 srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o json
 ```
@@ -99,28 +107,33 @@ names, generated command text, caller output, and audit records are redacted.
 
 ### Fleet fanout
 
-`status`, `ports`, and `exec` accept comma-separated context names:
+`status`, `ports`, `logs`, and governed action commands accept comma-separated
+context names, or a label selector:
 
 ```bash
 srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
 srvgov ports --targets web-a,web-b,web-c -o json
+srvgov logs --selector env=prod,role=web --unit nginx --lines 100 -o json
 srvgov exec --targets web-a,web-b,web-c "uptime" -o json
 srvgov exec --targets web-a,web-b,web-c --dry-run "systemctl restart nginx" -o json
+srvgov exec --selector env=prod,role=web --dry-run "systemctl restart nginx" -o json
 srvgov exec --targets web-a,web-b,web-c "systemctl restart nginx" \
   --reason "restart reviewed service" --ticket OPS-123 --yes -o json
 ```
 
-`status` and `ports` remain strictly R0-only. `exec` uses two-phase
-authorize-all: it classifies and non-interactively authorizes every sorted
-target before any SSH execution. If one target rejects the ticket, role,
-confirmation, or required allow flag, the whole batch stops with zero partial
-writes. After all targets pass, execution is concurrent and each target
-re-authorizes immediately before SSH. Dry-run does not authorize or connect;
-it reports each target's real base/effective risk plus
-`maxEffectiveRiskTier`. Targets are deduplicated and sorted, each target is
-audited independently, and one remote execution failure does not stop the
-others. Any per-target execution failure returns exit code 7 after emitting
-the complete result. `--targets` and `--context` are mutually exclusive.
+Selectors use `key=value,key2=value2` AND matching against context labels.
+`--targets`, `--selector`, and `--context` are mutually exclusive. `status`,
+`ports`, and `logs` remain strictly R0-only, including every fallback command
+they may run. `exec` uses two-phase authorize-all: it classifies and
+non-interactively authorizes every sorted target before any SSH execution. If
+one target rejects the ticket, role, confirmation, or required allow flag, the
+whole batch stops with zero partial writes. After all targets pass, execution
+is concurrent and each target re-authorizes immediately before SSH. Dry-run
+does not authorize or connect; it reports the resolved target set, each
+target's real base/effective risk, and `maxEffectiveRiskTier`. Targets are
+deduplicated and sorted, each target is audited independently, and one remote
+execution failure does not stop the others. Any per-target execution failure
+returns exit code 7 after emitting the complete result.
 
 ## Service Control
 

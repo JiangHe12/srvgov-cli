@@ -28,7 +28,7 @@ func TestCapabilitiesReflectSrvGovSurface(t *testing.T) {
 	if !got.Supported.Governance.DryRun || got.Supported.Governance.TOFU == "" || got.Supported.Governance.Redaction == "" {
 		t.Fatalf("governance = %#v", got.Supported.Governance)
 	}
-	if got.Supported.Governance.Fanout != "status and ports require R0 for every target; exec, svc, file, and docker authorize every target before any execution" {
+	if got.Supported.Governance.Fanout != "status, ports, and logs require R0 for every target; exec, svc, file, and docker authorize every target before any execution; --selector resolves targets by context labels" {
 		t.Fatalf("fanout = %q", got.Supported.Governance.Fanout)
 	}
 	for _, command := range []string{"ctx", "exec", "status", "ports", "logs", "svc", "file", "docker", "audit", "doctor", "version", "install"} {

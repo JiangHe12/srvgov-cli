@@ -37,6 +37,8 @@ npm pack --dry-run
 - Authorization must go through `opskit-core/safety`.
 - AI agents never auto-fill tickets, allow flags, or high-risk confirmation.
 - Impact comes from `exec --dry-run`, never model guesses.
+- Fanout may select contexts by explicit names or labels, but read-only R0 caps
+  and authorize-all write governance must not be bypassed.
 - Redaction applies before caller output and before audit persistence.
 - SSH host-key mismatches are hard failures; never add an insecure bypass.
 

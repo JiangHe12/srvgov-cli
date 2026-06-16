@@ -34,7 +34,7 @@ risk and required authorization; impact must come from CLI output, never model g
 Create and select a context:
 
 ```bash
-srvgov ctx set prod --server ssh://deploy@example.com:22 --identity-file ~/.ssh/id_ed25519 --env production --protected -o json
+srvgov ctx set prod --server ssh://deploy@example.com:22 --identity-file ~/.ssh/id_ed25519 --env production --label env=prod --label role=web --protected -o json
 srvgov ctx use prod -o json
 srvgov ctx current -o json
 ```
@@ -64,6 +64,9 @@ srvgov ctx migrate-credentials --to encrypted-file --context prod -o json
 Credstore references are preserved. `--include-credentials` is only for
 plain-yaml contexts and must not be used unless the human operator asks for it.
 
+Context labels are non-secret metadata. A `ctx set` call replaces that
+context's label set with the `--label key=value` flags supplied in the call.
+
 Passwords and private-key passphrases may be stored through the configured
 credential backend. Do not place credentials in command text.
 
@@ -91,23 +94,29 @@ Use `--targets` for governed execution across named contexts:
 ```bash
 srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
 srvgov ports --targets web-a,web-b,web-c -o json
+srvgov logs --targets web-a,web-b,web-c --unit nginx --lines 100 -o json
+srvgov logs --selector env=prod,role=web --unit nginx --lines 100 -o json
 srvgov exec --targets web-a,web-b,web-c "uptime" -o json
 srvgov exec --targets web-a,web-b,web-c --dry-run "systemctl restart nginx" -o json
+srvgov exec --selector env=prod,role=web --dry-run "systemctl restart nginx" -o json
 srvgov svc restart nginx --targets web-a,web-b,web-c --dry-run -o json
 srvgov file stat /etc/hosts --targets web-a,web-b,web-c -o json
 srvgov docker restart api --targets web-a,web-b,web-c --dry-run -o json
 ```
 
-`status` and `ports` have a hard effective-risk ceiling of R0. Multi-target
-`exec`, `svc`, `file`, and `docker` first authorize every target
+`--selector key=value,key2=value2` resolves targets by AND-matching context
+labels. `--targets`, `--selector`, and `--context` cannot be combined.
+`status`, `ports`, and `logs` have a hard effective-risk ceiling of R0,
+including fallback commands. Multi-target `exec`, `svc`, `file`, and `docker`
+first authorize every target
 non-interactively and start no SSH work unless all targets pass. Human-supplied
 reason, ticket, confirmation, and allow flags are reused but validated
 independently against every context's effective risk, ticket pattern, and
 RBAC. Never synthesize those values. Use each command's `--dry-run` to inspect
-every target's effective risk and `maxEffectiveRiskTier`; dry-run does not
-authorize, connect, or audit. Results are target-sorted, remote failures are
-isolated, and each target is audited separately. `--targets` and `--context`
-cannot be combined.
+the resolved target set, every target's effective risk, and
+`maxEffectiveRiskTier`; dry-run does not authorize, connect, or audit. Results
+are target-sorted, remote failures are isolated, and each target is audited
+separately.
 
 ## Service Control
 

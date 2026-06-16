@@ -96,7 +96,7 @@ func newFileCmd(f *cliFlags) *cobra.Command {
 				if maxBytes <= 0 || maxBytes > maxFileReadMaxBytes {
 					return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("--max-bytes must be between 1 and %d", maxFileReadMaxBytes), nil)
 				}
-				if cmd.Flags().Changed("targets") {
+				if fanoutRequested(cmd) {
 					return runFileReadFanout(cmd, f, flags, action, args[1], maxBytes, dryRun)
 				}
 				if dryRun {
@@ -107,7 +107,7 @@ func newFileCmd(f *cliFlags) *cobra.Command {
 				if contentSet {
 					return apperrors.New(apperrors.CodeUsageError, "--content is only valid with file write", nil)
 				}
-				if cmd.Flags().Changed("targets") {
+				if fanoutRequested(cmd) {
 					return runFileReadFanout(cmd, f, flags, action, args[1], maxBytes, dryRun)
 				}
 				if dryRun {
@@ -118,7 +118,7 @@ func newFileCmd(f *cliFlags) *cobra.Command {
 				if contentSet {
 					return apperrors.New(apperrors.CodeUsageError, "--content is only valid with file write", nil)
 				}
-				if cmd.Flags().Changed("targets") {
+				if fanoutRequested(cmd) {
 					return runFileReadFanout(cmd, f, flags, action, args[1], maxBytes, dryRun)
 				}
 				if dryRun {
@@ -129,7 +129,7 @@ func newFileCmd(f *cliFlags) *cobra.Command {
 				if !dryRun && !contentSet && !f.Yes {
 					return apperrors.New(apperrors.CodeUsageError, "reading content from stdin requires --yes", nil)
 				}
-				if cmd.Flags().Changed("targets") {
+				if fanoutRequested(cmd) {
 					return runFileWriteFanout(cmd, f, flags, args[1], content, contentSet, reason, allow, dryRun)
 				}
 				if dryRun {
@@ -170,7 +170,7 @@ func runFileReadFanout(
 	if action == "read" && (maxBytes <= 0 || maxBytes > maxFileReadMaxBytes) {
 		return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("--max-bytes must be between 1 and %d", maxFileReadMaxBytes), nil)
 	}
-	targets, err := loadFanoutTargets(flags.Targets, cmd.Flags().Changed("context"), flags.Concurrency)
+	targets, err := loadFanoutTargetsForCommand(cmd, flags)
 	if err != nil {
 		return err
 	}
@@ -235,7 +235,7 @@ func runFileWriteFanout(
 	reason string,
 	allow, dryRun bool,
 ) error {
-	targets, err := loadFanoutTargets(flags.Targets, cmd.Flags().Changed("context"), flags.Concurrency)
+	targets, err := loadFanoutTargetsForCommand(cmd, flags)
 	if err != nil {
 		return err
 	}

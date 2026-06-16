@@ -62,7 +62,7 @@ func newSvcCmd(f *cliFlags) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			action := strings.ToLower(args[0])
 			if action == "status" {
-				if cmd.Flags().Changed("targets") {
+				if fanoutRequested(cmd) {
 					return runServiceFanout(cmd, f, fanoutFlags, action, args[1], "", false, dryRun)
 				}
 				if dryRun {
@@ -73,7 +73,7 @@ func newSvcCmd(f *cliFlags) *cobra.Command {
 			if !serviceActions[action] {
 				return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("unsupported svc action %q", args[0]), nil)
 			}
-			if cmd.Flags().Changed("targets") {
+			if fanoutRequested(cmd) {
 				return runServiceFanout(cmd, f, fanoutFlags, action, args[1], reason, allow, dryRun)
 			}
 			if dryRun {
@@ -105,7 +105,7 @@ func runServiceFanout(
 	action, unit, reason string,
 	allow, dryRun bool,
 ) error {
-	targets, err := loadFanoutTargets(flags.Targets, cmd.Flags().Changed("context"), flags.Concurrency)
+	targets, err := loadFanoutTargetsForCommand(cmd, flags)
 	if err != nil {
 		return err
 	}

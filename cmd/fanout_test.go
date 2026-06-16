@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/JiangHe12/opskit-core/apperrors"
+	"github.com/JiangHe12/opskit-core/safety"
 
+	"github.com/JiangHe12/srvgov-cli/internal/cmdclass"
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
@@ -89,6 +92,127 @@ func TestExecFanoutRejectsTargetParsingErrorsBeforeSSH(t *testing.T) {
 				t.Fatalf("commands = %#v, want no SSH", runner.commands)
 			}
 		})
+	}
+}
+
+func TestFanoutSelectorParsingErrorsHappenBeforeSSH(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		code        apperrors.ErrorCode
+		wantMessage string
+	}{
+		{
+			name:        "context conflict",
+			args:        []string{"--context", "alpha", "exec", "--selector", "env=prod", "pwd"},
+			code:        apperrors.CodeUsageError,
+			wantMessage: "mutually exclusive",
+		},
+		{
+			name:        "targets conflict",
+			args:        []string{"exec", "--targets", "alpha", "--selector", "env=prod", "pwd"},
+			code:        apperrors.CodeUsageError,
+			wantMessage: "mutually exclusive",
+		},
+		{
+			name:        "empty selector",
+			args:        []string{"exec", "--selector", "", "pwd"},
+			code:        apperrors.CodeUsageError,
+			wantMessage: "selector",
+		},
+		{
+			name:        "missing equals",
+			args:        []string{"exec", "--selector", "env", "pwd"},
+			code:        apperrors.CodeUsageError,
+			wantMessage: "selector",
+		},
+		{
+			name:        "empty value",
+			args:        []string{"exec", "--selector", "env=", "pwd"},
+			code:        apperrors.CodeUsageError,
+			wantMessage: "selector",
+		},
+		{
+			name:        "zero match",
+			args:        []string{"exec", "--selector", "env=missing", "pwd"},
+			code:        apperrors.CodeResourceNotFound,
+			wantMessage: "no contexts match selector",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+				{Name: "alpha", Labels: map[string]string{"env": "prod"}},
+				{Name: "bravo", Labels: map[string]string{"env": "staging"}},
+			})
+			runner := &targetSSHRunner{}
+			restore := replaceSSHRunner(runner)
+			t.Cleanup(restore)
+
+			_, err := executeRoot(t, configPath, tt.args...)
+			appErr := apperrors.AsAppError(err)
+			if appErr.Code != tt.code || !strings.Contains(appErr.Message, tt.wantMessage) {
+				t.Fatalf("error = %#v, want code %s containing %q", appErr, tt.code, tt.wantMessage)
+			}
+			if len(runner.commands) != 0 {
+				t.Fatalf("commands = %#v, want no SSH", runner.commands)
+			}
+		})
+	}
+}
+
+func TestExecFanoutSelectorSelectsSortedTargetsAndDryRunShowsBlastRadius(t *testing.T) {
+	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "bravo", Labels: map[string]string{"env": "prod", "role": "web"}},
+		{Name: "alpha", Labels: map[string]string{"env": "prod", "role": "web"}},
+		{Name: "charlie", Labels: map[string]string{"env": "prod", "role": "db"}},
+	})
+	runner := &targetSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	output, err := executeRoot(t, configPath,
+		"-o", "json", "exec", "--selector", "env=prod,role=web", "--dry-run",
+		"systemctl restart nginx",
+	)
+	if err != nil {
+		t.Fatalf("exec selector dry-run error = %v", err)
+	}
+	var got fanoutView
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("Unmarshal(fanout) error = %v; output = %q", err, output)
+	}
+	if strings.Join(got.Targets, ",") != "alpha,bravo" || got.MaxEffectiveRiskTier != "R2" {
+		t.Fatalf("fanout = %#v", got)
+	}
+	if len(got.Results) != 2 {
+		t.Fatalf("results = %#v", got.Results)
+	}
+	for _, result := range got.Results {
+		data, ok := result.Data.(map[string]any)
+		if !ok || data["effectiveRiskTier"] != "R2" {
+			t.Fatalf("dry-run data = %#v", result.Data)
+		}
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands = %#v, want no SSH", runner.commands)
+	}
+}
+
+func TestExecFanoutSelectorCannotBypassAuthorization(t *testing.T) {
+	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "alpha", Labels: map[string]string{"env": "prod"}},
+		{Name: "bravo", Labels: map[string]string{"env": "prod"}},
+	})
+	runner := &targetSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	_, err := executeRoot(t, configPath, "exec", "--selector", "env=prod", "rm -rf /")
+	assertAppError(t, err, apperrors.CodeUsageError, 1)
+	if len(runner.commands) != 0 {
+		t.Fatalf("commands = %#v, want selector authorization failure before SSH", runner.commands)
 	}
 }
 
@@ -494,6 +618,103 @@ func TestStatusAndPortsFanoutUseIndependentR0Probes(t *testing.T) {
 	}
 }
 
+func TestLogsFanoutSelectorUsesReadOnlyCapAndAuditsEachTarget(t *testing.T) {
+	opts := observe.LogOptions{
+		File:  "/var/log/app; rm -rf /",
+		Lines: 2,
+		Grep:  "ERROR; reboot",
+	}
+	command := observe.FileCommand(opts)
+	if risk := cmdclass.Classify(command); risk != safety.R0 {
+		t.Fatalf("logs file command risk = %v, want R0; command = %q", risk, command)
+	}
+	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
+		{Name: "bravo", Labels: map[string]string{"env": "prod", "role": "web"}},
+		{Name: "alpha", Labels: map[string]string{"env": "prod", "role": "web"}},
+		{Name: "charlie", Labels: map[string]string{"env": "staging", "role": "web"}},
+	})
+	runner := &targetSSHRunner{
+		results: map[string]sshexec.Result{
+			"alpha\x00" + command: {Stdout: "INFO ok\nERROR; reboot password=alpha-secret\n"},
+			"bravo\x00" + command: {Stdout: "ERROR; reboot token=bravo-secret\n"},
+		},
+	}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	output, err := executeRoot(t, configPath,
+		"-o", "json", "logs",
+		"--selector", "env=prod,role=web",
+		"--file", opts.File,
+		"--lines", "2",
+		"--grep", opts.Grep,
+	)
+	if err != nil {
+		t.Fatalf("logs fanout error = %v", err)
+	}
+	var got fanoutView
+	if err := json.Unmarshal([]byte(output), &got); err != nil {
+		t.Fatalf("Unmarshal(logs fanout) error = %v; output = %q", err, output)
+	}
+	if strings.Join(got.Targets, ",") != "alpha,bravo" || got.Summary.Succeeded != 2 || got.Summary.Failed != 0 {
+		t.Fatalf("fanout = %#v", got)
+	}
+	if strings.Contains(output, "alpha-secret") || strings.Contains(output, "bravo-secret") {
+		t.Fatalf("logs fanout leaked secret: %s", output)
+	}
+	runner.mu.Lock()
+	commands := append([]string(nil), runner.commands...)
+	runner.mu.Unlock()
+	sort.Strings(commands)
+	wantCommands := []string{"alpha\x00" + command, "bravo\x00" + command}
+	if strings.Join(commands, "\n") != strings.Join(wantCommands, "\n") {
+		t.Fatalf("commands = %#v, want %#v", commands, wantCommands)
+	}
+	events := readAuditEvents(t)
+	if len(events) != 2 {
+		t.Fatalf("audit events = %#v", events)
+	}
+	for _, event := range events {
+		if event.EventType != srvgovaudit.EventTypeLogsObserve || event.RiskTier != "R0" {
+			t.Fatalf("audit event = %#v", event)
+		}
+	}
+}
+
+func TestLogsFanoutContinuesAfterTargetFailure(t *testing.T) {
+	opts := observe.LogOptions{File: "/var/log/app.log", Lines: 1}
+	command := observe.FileCommand(opts)
+	configPath := prepareFanoutContexts(t)
+	runner := &targetSSHRunner{
+		results: map[string]sshexec.Result{
+			"alpha\x00" + command: {Stdout: "ready\n"},
+			"bravo\x00" + command: {ExitCode: 1, Stderr: "tail: cannot open '/var/log/app.log' for reading: Permission denied"},
+		},
+	}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	output, err := executeRoot(t, configPath, "-o", "json", "logs", "--targets", "alpha,bravo", "--file", opts.File, "--lines", "1")
+	assertAppError(t, err, apperrors.CodeBackendError, 7)
+	var got fanoutView
+	if jsonErr := json.Unmarshal([]byte(output), &got); jsonErr != nil {
+		t.Fatalf("Unmarshal(logs fanout) error = %v; output = %q", jsonErr, output)
+	}
+	if got.Summary.Succeeded != 1 || got.Summary.Failed != 1 || got.Results[1].Error == nil {
+		t.Fatalf("fanout = %#v", got)
+	}
+	if strings.Contains(got.Results[1].Error.Message, "tail is not available") {
+		t.Fatalf("error misreported tool absence: %#v", got.Results[1].Error)
+	}
+	if len(runner.commands) != 2 {
+		t.Fatalf("commands = %#v, want both targets attempted", runner.commands)
+	}
+	events := readAuditEvents(t)
+	if len(events) != 2 {
+		t.Fatalf("audit events = %#v", events)
+	}
+}
+
 func prepareFanoutContexts(t *testing.T) string {
 	return prepareFanoutContextsWith(t, []fanoutContextSpec{
 		{Name: "bravo"},
@@ -506,6 +727,7 @@ type fanoutContextSpec struct {
 	Protected     bool
 	TicketPattern string
 	Roles         map[string]string
+	Labels        map[string]string
 }
 
 func prepareFanoutContextsWith(t *testing.T, specs []fanoutContextSpec) string {
@@ -525,6 +747,9 @@ func prepareFanoutContextsWith(t *testing.T, specs []fanoutContextSpec) string {
 		if spec.TicketPattern != "" {
 			args = append(args, "--ticket-pattern", spec.TicketPattern)
 		}
+		for _, label := range sortedLabelFlags(spec.Labels) {
+			args = append(args, "--label", label)
+		}
 		runCommand(t, configPath, args...)
 		for operator, role := range spec.Roles {
 			runCommand(t, configPath,
@@ -538,4 +763,20 @@ func prepareFanoutContextsWith(t *testing.T, specs []fanoutContextSpec) string {
 		runCommand(t, configPath, "ctx", "use", specs[0].Name)
 	}
 	return configPath
+}
+
+func sortedLabelFlags(labels map[string]string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(labels))
+	for key := range labels {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+labels[key])
+	}
+	return out
 }

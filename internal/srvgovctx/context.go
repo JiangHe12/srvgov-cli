@@ -25,11 +25,12 @@ var defaultAuthMethods = []string{AuthPrivateKey, AuthAgent, AuthPassword}
 type Context struct {
 	corectx.Base `yaml:",inline"`
 
-	Host               string   `yaml:"host"`
-	Port               int      `yaml:"port"`
-	IdentityFile       string   `yaml:"identityFile,omitempty"`
-	IdentityPassphrase string   `yaml:"identityPassphrase,omitempty"`
-	AuthMethods        []string `yaml:"authMethods,omitempty"`
+	Host               string            `yaml:"host"`
+	Port               int               `yaml:"port"`
+	IdentityFile       string            `yaml:"identityFile,omitempty"`
+	IdentityPassphrase string            `yaml:"identityPassphrase,omitempty"`
+	AuthMethods        []string          `yaml:"authMethods,omitempty"`
+	Labels             map[string]string `yaml:"labels,omitempty"`
 }
 
 var store = corectx.NewStore(func(c *Context) *corectx.Base { return &c.Base })

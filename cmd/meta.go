@@ -107,7 +107,7 @@ func capabilitiesData() CapabilitiesData {
 				DryRun:    true,
 				TOFU:      "strict SSH host-key fingerprint pinning",
 				Redaction: "command, stdout, stderr, and audit fields are redacted",
-				Fanout:    "status and ports require R0 for every target; exec, svc, file, and docker authorize every target before any execution",
+				Fanout:    "status, ports, and logs require R0 for every target; exec, svc, file, and docker authorize every target before any execution; --selector resolves targets by context labels",
 			},
 			Commands: []string{
 				"ctx",

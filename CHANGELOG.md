@@ -1,6 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## v0.8.0
+
+### Added
+
+- Added context labels with `ctx set --label key=value`, portable
+  export/import round-trip, and `ctx list/current` display.
+- Added fanout `--selector key=value,key2=value2` target selection across
+  read-only and governed fanout commands.
+- Added R0-capped multi-target `logs` fanout with per-target audit and
+  continue-on-error aggregation.
 
 ## v0.7.0
 

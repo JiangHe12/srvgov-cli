@@ -136,7 +136,7 @@ func newDockerCmd(f *cliFlags) *cobra.Command {
 				if len(args) != 1 {
 					return apperrors.New(apperrors.CodeUsageError, "docker ps/list does not accept a container", nil)
 				}
-				if cmd.Flags().Changed("targets") {
+				if fanoutRequested(cmd) {
 					return runDockerFanout(cmd, f, flags, "list", "", tail, "", false, dryRun)
 				}
 				if dryRun {
@@ -149,7 +149,7 @@ func newDockerCmd(f *cliFlags) *cobra.Command {
 			}
 			switch action {
 			case "inspect":
-				if cmd.Flags().Changed("targets") {
+				if fanoutRequested(cmd) {
 					return runDockerFanout(cmd, f, flags, action, args[1], tail, "", false, dryRun)
 				}
 				if dryRun {
@@ -160,7 +160,7 @@ func newDockerCmd(f *cliFlags) *cobra.Command {
 				if tail < 1 || tail > maxDockerLogTail {
 					return apperrors.New(apperrors.CodeUsageError, "--tail must be between 1 and 10000", nil)
 				}
-				if cmd.Flags().Changed("targets") {
+				if fanoutRequested(cmd) {
 					return runDockerFanout(cmd, f, flags, action, args[1], tail, "", false, dryRun)
 				}
 				if dryRun {
@@ -171,7 +171,7 @@ func newDockerCmd(f *cliFlags) *cobra.Command {
 				if !dockerActions[action] {
 					return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("unsupported docker action %q", args[0]), nil)
 				}
-				if cmd.Flags().Changed("targets") {
+				if fanoutRequested(cmd) {
 					return runDockerFanout(cmd, f, flags, action, args[1], tail, reason, allow, dryRun)
 				}
 				if dryRun {
@@ -210,7 +210,7 @@ func runDockerFanout(
 	if action == "logs" && (tail < 1 || tail > maxDockerLogTail) {
 		return apperrors.New(apperrors.CodeUsageError, "--tail must be between 1 and 10000", nil)
 	}
-	targets, err := loadFanoutTargets(flags.Targets, cmd.Flags().Changed("context"), flags.Concurrency)
+	targets, err := loadFanoutTargetsForCommand(cmd, flags)
 	if err != nil {
 		return err
 	}

@@ -48,11 +48,13 @@ type fanoutView struct {
 
 type fanoutFlags struct {
 	Targets     string
+	Selector    string
 	Concurrency int
 }
 
 func bindFanoutFlags(command *cobra.Command, flags *fanoutFlags) {
 	command.Flags().StringVar(&flags.Targets, "targets", "", "Comma-separated server context names")
+	command.Flags().StringVar(&flags.Selector, "selector", "", "Label selector key=value,key2=value2")
 	command.Flags().IntVar(&flags.Concurrency, "concurrency", defaultFanoutConcurrency, "Maximum concurrent targets")
 }
 
@@ -98,8 +100,8 @@ func runReadOnlyObservation[T any](
 	runTarget func(*cobra.Command, *cliFlags, srvgovctx.Context, string) (T, error),
 	printSingle func(*cliFlags, T) error,
 ) error {
-	if cmd.Flags().Changed("targets") {
-		targets, err := loadFanoutTargets(flags.Targets, cmd.Flags().Changed("context"), flags.Concurrency)
+	if fanoutRequested(cmd) {
+		targets, err := loadFanoutTargetsForCommand(cmd, flags)
 		if err != nil {
 			return err
 		}
@@ -127,25 +129,29 @@ func runReadOnlyObservation[T any](
 	return printSingle(f, value)
 }
 
-func loadFanoutTargets(raw string, selectedContextSet bool, concurrency int) ([]fanout.Target[srvgovctx.Context], error) {
-	if selectedContextSet {
-		return nil, apperrors.New(apperrors.CodeUsageError, "--targets and --context are mutually exclusive", nil)
+func fanoutRequested(cmd *cobra.Command) bool {
+	return cmd.Flags().Changed("targets") || cmd.Flags().Changed("selector")
+}
+
+func loadFanoutTargetsForCommand(cmd *cobra.Command, flags fanoutFlags) ([]fanout.Target[srvgovctx.Context], error) {
+	return loadFanoutTargets(flags, cmd.Flags().Changed("context"), cmd.Flags().Changed("targets"), cmd.Flags().Changed("selector"))
+}
+
+func loadFanoutTargets(flags fanoutFlags, selectedContextSet, targetsSet, selectorSet bool) ([]fanout.Target[srvgovctx.Context], error) {
+	if selectedContextSet && (targetsSet || selectorSet) {
+		return nil, apperrors.New(apperrors.CodeUsageError, "--targets, --selector, and --context are mutually exclusive", nil)
 	}
-	if concurrency < 1 {
+	if targetsSet && selectorSet {
+		return nil, apperrors.New(apperrors.CodeUsageError, "--targets and --selector are mutually exclusive", nil)
+	}
+	if flags.Concurrency < 1 {
 		return nil, apperrors.New(apperrors.CodeUsageError, "--concurrency must be at least 1", nil)
 	}
-
-	names := make(map[string]struct{})
-	for _, value := range strings.Split(raw, ",") {
-		if name := strings.TrimSpace(value); name != "" {
-			names[name] = struct{}{}
-		}
-	}
-	if len(names) == 0 {
-		return nil, apperrors.New(apperrors.CodeUsageError, "--targets requires at least one target", nil)
-	}
-
 	cfg, err := srvgovctx.Load()
+	if err != nil {
+		return nil, err
+	}
+	names, err := fanoutTargetNames(cfg, flags, selectorSet)
 	if err != nil {
 		return nil, err
 	}
@@ -175,6 +181,62 @@ func loadFanoutTargets(raw string, selectedContextSet bool, concurrency int) ([]
 		})
 	}
 	return targets, nil
+}
+
+func fanoutTargetNames(cfg *srvgovctx.Config, flags fanoutFlags, selectorSet bool) (map[string]struct{}, error) {
+	if selectorSet {
+		selector, err := parseSelector(flags.Selector)
+		if err != nil {
+			return nil, err
+		}
+		names := make(map[string]struct{})
+		for name, item := range cfg.Contexts {
+			if labelsMatch(item.Labels, selector) {
+				names[name] = struct{}{}
+			}
+		}
+		if len(names) == 0 {
+			return nil, apperrors.New(apperrors.CodeResourceNotFound, "no contexts match selector", nil)
+		}
+		return names, nil
+	}
+
+	names := make(map[string]struct{})
+	for _, value := range strings.Split(flags.Targets, ",") {
+		if name := strings.TrimSpace(value); name != "" {
+			names[name] = struct{}{}
+		}
+	}
+	if len(names) == 0 {
+		return nil, apperrors.New(apperrors.CodeUsageError, "--targets requires at least one target", nil)
+	}
+	return names, nil
+}
+
+func parseSelector(raw string) (map[string]string, error) {
+	selector := make(map[string]string)
+	for _, part := range strings.Split(raw, ",") {
+		key, value, ok := strings.Cut(part, "=")
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if !ok || key == "" || value == "" {
+			return nil, apperrors.New(apperrors.CodeUsageError, "--selector must be key=value pairs with non-empty keys and values", nil)
+		}
+		selector[key] = value
+	}
+	if len(selector) == 0 {
+		return nil, apperrors.New(apperrors.CodeUsageError, "--selector must be key=value pairs with non-empty keys and values", nil)
+	}
+	return selector, nil
+}
+
+func labelsMatch(labels map[string]string, selector map[string]string) bool {
+	for key, value := range selector {
+		if labels[key] != value {
+			return false
+		}
+	}
+	return true
 }
 
 func requireFanoutR0(targets []fanout.Target[srvgovctx.Context], commands []string) error {
