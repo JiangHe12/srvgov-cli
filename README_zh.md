@@ -1,284 +1,272 @@
+<div align="center">
+
 # srvgov-cli
 
-[English](README.md) | [中文](README_zh.md)
+**面向人类与 AI 智能体的「带治理」SSH 远程服务器操作命令行。**
 
-面向 AI agent 和操作人员的受治理远程服务器命令执行 CLI。`srvgov` 将
-fail-closed 命令分类、R0-R3 授权、严格 TOFU SSH 主机密钥固定、输出脱敏和
-结构化审计串成一条执行链。
+在远程机器上执行命令、控制服务、改文件、管容器——每条命令都做风险分级、可预览、经严格 TOFU 绑定的 SSH 执行、输出脱敏、全程审计。安全到可以跨整个机群批量执行,也安全到可以交给 AI。
 
-## 安装
+[![npm version](https://img.shields.io/npm/v/srvgov-cli.svg)](https://www.npmjs.com/package/srvgov-cli)
+[![CI](https://github.com/JiangHe12/srvgov-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/JiangHe12/srvgov-cli/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/srvgov-cli.svg)](LICENSE)
+[![signed](https://img.shields.io/badge/release-cosign%20%2B%20npm%20provenance-blue.svg)](#-供应链可信与校验)
+
+[English](README.md) · [简体中文](README_zh.md)
+
+</div>
+
+---
+
+## 🧭 这是什么?(先看这里)
+
+SSH 登上生产服务器敲命令,既强大又可怕:一个敲错目录的 `rm -rf`、一次停错服务的 `systemctl stop`,没有预览、没有第二双眼睛、往往也没有记录。把裸 shell 交给自动化脚本或 AI 智能体,风险更是成倍放大。
+
+**srvgov-cli 给每一个远程操作都套上护栏。** 把它想成站在你和服务器之间的一位谨慎 SRE:
+
+- 🧠 **执行前先给命令分级**——一个结构感知的分类器读取*整条*命令行(管道、重定向、`sudo`、命令替换)并判定风险档;未知或含糊?fail-closed 到更高档。
+- 🛡️ **危险越大,门槛越高**——读取直接跑;良性变更需理由 + 确认;破坏性或特权命令需变更工单**外加**明确的「允许破坏」标志。
+- 👀 **优先结构化观测**——`status`、`ports`、`logs`、`file`、`svc`、`docker` 给你安全、固定形状的读取,而非手搓 shell。
+- 🔒 **严格 TOFU 绑定主机密钥**——已知主机的密钥变更或新类型一律硬失败,绝不静默接受。
+- 🛰️ **安全地跨机群批量执行**——按名字或标签选目标;每个目标在**任何** SSH 开始前都先授权,且各自独立审计。
+- 🤖 **可放心交给 AI 智能体**——它能自由观测、预览,但**无法**伪造破坏性操作所需的人类审批。
+
+输出经过脱敏,每个操作都进防篡改审计日志。
+
+---
+
+## ✨ 功能一览
+
+| | |
+|---|---|
+| ⌨️ **受治理 `exec`** | 执行一条 shell 命令;fail-closed、结构感知的分类器设定其风险档与所需授权。 |
+| 👀 **结构化观测** | `status`、`ports`、`logs`、`file read/stat/list`、`svc status`、`docker list/inspect/logs`——审计型 R0 读取,脱敏,绝不加 `sudo`。 |
+| 🔧 **固定动词控制** | `svc start/stop/restart/reload/enable/disable`、`file write`、`docker start/stop/restart/rm`——不暴露任意 `systemctl`/`docker` 面。 |
+| 🚦 **R0–R3 治理** | 每条命令风险分级;受保护上下文整体升一档;AI 调用者永远无法自我授权。 |
+| 🛰️ **机群 fanout** | `--targets a,b,c` 或 `--selector key=value`(标签匹配);读取封顶 R0;写入在任何 SSH 前先授权**所有**目标。 |
+| 🔒 **严格 TOFU SSH** | 主机密钥首次使用时绑定;密钥变更则拒绝、等待人工复核。非 PTY 执行。 |
+| 👥 **RBAC 与上下文** | 每个上下文的 `reader` / `writer` / `admin` 角色;可移植的上下文导出/导入;凭证后端。 |
+| 🧹 **处处脱敏** | 密钥在输出**和**审计写入前都被抹除;`file write` 只审计路径 + 字节数 + SHA-256,绝不记内容。 |
+| 📜 **防篡改审计** | 每个操作(含被拒)都哈希链;`audit verify` 检测篡改。 |
+| 🔏 **可信供应链** | 二进制经 **cosign 签名**、npm 带 **provenance**、安装器校验 **SHA-256**。 |
+
+---
+
+## 📦 安装
 
 ```bash
 npm install -g srvgov-cli
-# 或
-go install github.com/JiangHe12/srvgov-cli@latest
 ```
 
-GitHub Releases 提供 Linux、macOS、Windows 的 amd64/arm64 二进制。npm
-安装会下载匹配平台的产物，并默认校验 SHA-256。
+这会装一个很小的启动器;首次运行时,它会从已签名的 [GitHub Release](https://github.com/JiangHe12/srvgov-cli/releases) 下载对应你 OS/架构的预编译二进制,并在使用前**校验 SHA-256**。安装器需要 Node.js ≥ 14(CLI 本身是自包含的 Go 二进制)。
 
-## 快速开始
+<details>
+<summary>其它安装方式</summary>
+
+- **直接下载**——从 [Releases 页面](https://github.com/JiangHe12/srvgov-cli/releases)取二进制,用 cosign 签名的 `checksums.txt` 校验,放进 `PATH` 并重命名为 `srvgov`。
+- **从源码**——`go install github.com/JiangHe12/srvgov-cli@latest`(Go 1.22+)。
 
 ```bash
-srvgov ctx set dev --server ssh://alice@example.com:22 --identity-file ~/.ssh/id_ed25519 -o json
-srvgov ctx use dev -o json
+srvgov version
+srvgov doctor -o json
+```
+
+</details>
+
+---
+
+## 🚀 快速上手(60 秒)
+
+```bash
+# 1. 定义服务器上下文(SSH 目标、密钥、标签)——主机密钥在首次连接时绑定
+srvgov ctx set prod --server ssh://deploy@example.com:22 \
+  --identity-file ~/.ssh/id_ed25519 --env production --label env=prod --label role=web --protected
+srvgov ctx use prod
+
+# 2. 用结构化读取观测——免费(R0)且被审计
 srvgov status -o json
-srvgov ports -o json
-srvgov logs --unit sshd --since "1 hour ago" --lines 50 -o json
-srvgov svc status sshd -o json
-srvgov file stat /etc/hosts -o json
-srvgov docker list -o json
-srvgov exec --dry-run "uptime" -o json
+srvgov logs --unit nginx --since "30 minutes ago" --lines 100 -o json
+
+# 3. 运行前先预览命令风险——dry-run 只分类,不连 SSH
+srvgov exec --dry-run "systemctl restart nginx" -o json
+
+# 4. 直接跑一个读取(R0)
 srvgov exec "uptime" -o json
-srvgov audit query --limit 20 -o json
+
+# 5. 做一次受治理变更——重启服务是 R2:需理由 + 工单 + 确认
+srvgov svc restart nginx --reason "apply reviewed config" --ticket OPS-123 --yes -o json
 ```
 
-自动化和 AI agent 始终使用 `-o json`。
+> 💡 **提示:** 创建生产上下文时加 `--protected`,之后 srvgov 会把该上下文里每个变更升一档(R2 → R3,额外需要 `--allow-destructive`)。
 
-## 治理模型
+---
 
-| 风险 | 含义 | 授权 |
-|---|---|---|
-| R0 | 已知只读命令 | 可直接执行，仍审计 |
-| R1 | 已知良性变更 | `--reason` + `--yes` |
-| R2 | 未知或已升档命令 | `--reason` + 非空 `--ticket` + `--yes` |
-| R3 | 破坏性、提权、动态或解析不确定命令 | `--reason` + `--ticket` + `--allow-destructive` + `--yes` |
+## 🔐 治理模型(最重要的部分)
 
-protected context 会将 R1 升为 R2、R2 升为 R3。AI agent 绝不能自动填写
-`--ticket`、`--allow-destructive` 或高风险 `--yes`。影响面必须来自
-`exec --dry-run` 的分类结果，不能靠模型猜。
+一个结构感知的分类器读取**整条**命令并判定风险档。分类器的判定(而非你的意图)是权威的,且 fail-closed(未知/含糊 → 更高档)。
 
-## Context
+| 档位 | 涵盖范围 | 你必须提供 |
+|:---:|---|---|
+| **R0** | 已知只读命令与结构化观测(`status`、`ports`、`logs`、`file read`、`svc status`、`docker inspect`) | 无——但仍会被审计 |
+| **R1** | 已知良性变更 | `--reason` **加** `--yes` |
+| **R2** | 未知 / 升级命令;`svc` 与 `docker` 生命周期;`file write` | `--reason`、非空 `--ticket`、**加** `--yes` |
+| **R3** | 破坏性、特权、动态、或解析不确定的命令 | 以上**再加** `--allow-destructive` |
+
+**受保护上下文把每个变更升一档**(R1→R2,R2→R3)。三条原则保证安全——尤其对自动化:
+
+1. **风险与影响来自工具,而非猜测。** 用 `exec --dry-run` 取分类与所需授权;srvgov 宁可 fail-closed 也不猜。
+2. **主机信任是严格的。** SSH 主机密钥首次使用时绑定(TOFU);已知主机的密钥变更或新类型一律拒绝、等待人工复核——没有不安全旁路。
+3. **🤖 AI 智能体绝不能伪造 `--ticket`、`--allow-destructive` 或高风险 `--yes`。** 它们是*人类*授权输入;智能体应上报「这步需要审批 X」然后停下。
+
+---
+
+## 📚 命令参考
+
+`srvgov <命令> [标志]`。加 `-o json` 得机器可读输出,任意命令加 `--help` 看完整标志,`srvgov capabilities -o json` 看完整受治理命令面。
+
+<details open>
+<summary><b>exec</b> — 一条受治理命令</summary>
 
 ```bash
-srvgov ctx set prod \
-  --server ssh://deploy@example.com:22 \
-  --identity-file ~/.ssh/id_ed25519 \
-  --auth-method private-key,agent,password \
-  --env production \
-  --label env=prod \
-  --label role=web \
-  --protected \
-  -o json
-
-srvgov ctx use prod -o json
-srvgov ctx current -o json
-srvgov ctx list -o json
-srvgov ctx delete old-host -o json
-srvgov ctx role set prod --target-operator alice --role writer -o json
-srvgov ctx role list prod -o json
-srvgov ctx export prod > prod.ctx.yaml
-srvgov ctx import -f prod.ctx.yaml --rename prod-copy --yes -o json
-srvgov ctx migrate-credentials --to encrypted-file --context prod -o json
+srvgov exec --dry-run "systemctl restart nginx" -o json   # 仅分类;不连 SSH、不产生审计事件
+srvgov exec "uptime" -o json                               # R0
+srvgov exec "touch /tmp/ready" --reason "标记就绪" --yes -o json                            # R1
+srvgov exec "custom-maint" --reason "维护" --ticket OPS-123 --yes -o json                   # R2
+srvgov exec "rm -rf /tmp/old" --reason "清理" --ticket OPS-123 --allow-destructive --yes -o json  # R3
 ```
+</details>
 
-Context 输出不会包含 password、私钥内容、私钥口令或 identity-file 路径。
-
-`ctx set` 支持重复传入 `--label key=value`。label 是非密钥元数据，会在
-`ctx list` / `ctx current` 中展示，会随 portable context export/import
-无损往返，也可用于 fan-out `--selector`。一次 `ctx set` 会用本次传入的
-label 替换该 context 的整组 label。
-
-可移植 context export 使用 `srvgov.io/ctx-export/v1`。默认脱敏字面量
-password 和 SSH identity passphrase；credstore 引用原样保留。
-`--include-credentials` 仅限 plain-yaml context。
-
-## 动手前先观察
-
-三个可观测命令把常见只读 SSH 输出转换成稳定 JSON:
+<details>
+<summary><b>观测</b> — 结构化 R0 读取(脱敏,绝不 <code>sudo</code>)</summary>
 
 ```bash
 srvgov status -o json
-srvgov ports -o json
-srvgov status --targets web-a,web-b --concurrency 5 -o json
-srvgov logs --targets web-a,web-b --unit nginx --lines 100 -o json
+srvgov ports  -o json
 srvgov logs --unit nginx --since "30 minutes ago" --priority warning --lines 100 -o json
 srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o json
-```
-
-每条底层远端命令都独立经过与 `exec` 相同的分类、有效风险、授权、SSH、脱敏和
-审计流程，绝不使用 shell 操作符拼接。`ports` 从 `ss` 降级到 `netstat`；
-unit 日志在 journalctl 不可用时降级到 `systemctl status`。命令不会自动添加
-`sudo`，拿不到 PID/process 时字段留空。日志文本、进程名、构造命令、调用方
-输出和审计记录都会脱敏。
-
-### 舰队扇出
-
-`status`、`ports`、`logs` 和受治理动作命令支持逗号分隔的 context 名，
-也支持标签选择器：
-
-```bash
-srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
-srvgov ports --targets web-a,web-b,web-c -o json
-srvgov logs --selector env=prod,role=web --unit nginx --lines 100 -o json
-srvgov exec --targets web-a,web-b,web-c "uptime" -o json
-srvgov exec --targets web-a,web-b,web-c --dry-run "systemctl restart nginx" -o json
-srvgov exec --selector env=prod,role=web --dry-run "systemctl restart nginx" -o json
-srvgov exec --targets web-a,web-b,web-c "systemctl restart nginx" \
-  --reason "restart reviewed service" --ticket OPS-123 --yes -o json
-```
-
-selector 语法是 `key=value,key2=value2`，对 context labels 做 AND 匹配。
-`--targets`、`--selector`、`--context` 三者互斥。`status`、`ports` 和
-`logs` 仍严格限定为 R0，包括它们可能执行的回退命令。`exec` 使用两阶段
-authorize-all：先按目标名排序，逐台完成分类和强制非交互授权，任何目标的
-ticket、RBAC、确认或 allow flag 不满足都会整批拒绝，保证零部分写入。全体
-通过后才并发执行，并在每台 SSH 前再次授权。dry-run 不授权、不连接，返回
-解析后的完整目标集、逐台真实 base/effective 风险以及 `maxEffectiveRiskTier`。
-目标会去重并排序，每台独立审计；远端执行失败不会中止其余目标，但完整结果
-输出后整体返回退出码 7。
-
-## 服务管控
-
-`svc` 只暴露固定服务操作白名单。unit 名始终按 shell 字面量处理，每条构造出的
-`systemctl` 命令都经过与 `exec` 相同的分类和授权链。
-
-```bash
-# R0 读取，仍审计
-srvgov svc status nginx -o json
-
-# R2 变更：reason、ticket 和确认必须由人提供
-srvgov svc restart nginx \
-  --reason "apply reviewed configuration" --ticket OPS-123 --yes -o json
-```
-
-可用动作仅为 `status`、`start`、`stop`、`restart`、`reload`、`enable` 和
-`disable`，每次只允许一个 unit。protected context 会把服务变更从 R2 升为
-R3，并额外要求人提供 `--allow-destructive`。`svc` 不暴露电源、isolate、
-mask 或任意 systemctl 子命令。
-
-## 文件操作
-
-文件读取是结构化 R0 操作，并且仍会审计：
-
-```bash
 srvgov file read /etc/hosts --max-bytes 1048576 -o json
 srvgov file stat /etc/hosts -o json
 srvgov file list /var/log -o json
-```
-
-写入使用 `tee -- '<path>'`，内容通过 SSH stdin 流式传输。普通路径为 R2；
-SSH 授权文件、shell dotfile、crontab 等敏感路径为 R3。
-
-```bash
-printf '%s\n' 'enabled=true' | srvgov file write /tmp/app.conf \
-  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
-
-srvgov file write /tmp/app.conf --content "enabled=true" \
-  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
-```
-
-未提供 `--content` 时，stdin 就是文件内容，授权前必须显式给出 `--yes`。
-提供 `--content` 后绝不读取 stdin，仍可正常使用交互确认。写入输出和审计都不会
-包含文件内容；审计只记录脱敏路径、字节数和 SHA-256。本版本使用直接、非原子
-覆盖，不实现临时文件加 rename。`file` 不使用 SFTP，也不会自动添加 `sudo`。
-
-## Docker 治理
-
-Docker 读取提供稳定且脱敏的结构化输出：
-
-```bash
+srvgov svc status nginx -o json
 srvgov docker list -o json
-srvgov docker inspect api -o json
+srvgov docker inspect api -o json          # 固定安全字段子集;排除 Env
 srvgov docker logs api --tail 100 -o json
 ```
+</details>
 
-`docker list`、`inspect`、`logs` 都是审计的 R0 操作。inspect 在远端只投影
-固定安全字段，不请求容器环境变量，也不返回完整 inspect 文档。logs 默认 100
-行，`--tail` 允许 1 到 10000。
-
-生命周期变更为 R2，需要人类授权：
+<details>
+<summary><b>控制</b> — 固定动词(R2,受保护上下文为 R3)</summary>
 
 ```bash
-srvgov docker restart api \
-  --reason "restart after reviewed deployment" --ticket OPS-123 --yes -o json
+# systemd(一个字面 unit;无任意子命令)
+srvgov svc restart nginx --reason "apply reviewed config" --ticket OPS-123 --yes -o json
+#   动词:start | stop | restart | reload | enable | disable
+
+# 文件写入(无 SFTP;审计只记 路径 + 字节数 + SHA-256,绝不记内容)
+srvgov file write /tmp/app.conf --content "enabled=true" --reason "update config" --ticket OPS-123 --yes -o json
+#   不带 --content 时,stdin 作为文件内容流入,且 --yes 强制必需
+
+# docker 容器生命周期(固定为 start | stop | restart | rm)
+srvgov docker restart api --reason "restart after deploy" --ticket OPS-123 --yes -o json
 ```
 
-固定白名单仅包含 `ps`/`list`、`inspect`、`logs`、`start`、`stop`、
-`restart` 和 `rm`，每次一个容器。绝不暴露 Docker run、create、exec、
-build、copy、compose 或 prune。protected context 会把生命周期动作升到
-R3，并要求人提供 `--allow-destructive`。容器标识始终 shell 引用。
+敏感路径或受保护上下文会把写入/生命周期升到 R3,额外需要 `--allow-destructive`。`svc` 与 `docker` 动词**有意不**暴露任意 `systemctl` 或 `docker run/exec/build/compose/prune` 面——若人类明确需要固定集合之外的操作,用 `exec --dry-run`。
+</details>
 
-## 受治理执行
-
-预览不会连接 SSH，也不会执行命令:
+<details>
+<summary><b>机群 fanout</b> — <code>--targets</code> / <code>--selector</code></summary>
 
 ```bash
-srvgov exec --dry-run "touch /tmp/deploy-ready" -o json
+srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
+srvgov logs --selector env=prod,role=web --unit nginx --lines 100 -o json
+srvgov exec --selector env=prod,role=web --dry-run "systemctl restart nginx" -o json
+srvgov svc restart nginx --targets web-a,web-b --reason "rollout" --ticket OPS-123 --yes -o json
+srvgov file stat /etc/hosts --targets web-a,web-b -o json
 ```
 
-按返回的风险档执行:
+- `--selector key=value,key2=value2` 按上下文标签 AND 匹配。`--targets`、`--selector`、`--context` 不能组合使用。
+- `status` / `ports` / `logs` 对所有目标有硬性 **R0 上限**(含回退命令)。
+- 多目标 `exec` / `svc` / `file` / `docker` **先授权每个目标**,全部通过前不开始任何 SSH;人类提供的理由/工单/确认/allow 标志会被复用,但对每个目标的有效风险、工单模式、RBAC **独立重新校验**。
+- 用 `--dry-run` 查看解析出的目标集与每个目标的 `maxEffectiveRiskTier`——dry-run 绝不连接、授权或审计。结果按目标排序,失败相互隔离,每个目标独立审计。
+</details>
+
+<details>
+<summary><b>上下文、角色、审计与诊断</b></summary>
 
 ```bash
-# R0
-srvgov exec "systemctl status nginx" -o json
+# 上下文(标签是非密元数据;每次 ctx set 会替换该上下文的标签集)
+srvgov ctx set <name> --server ssh://user@host:22 --identity-file <key> [--env <e>] [--label k=v] [--protected]
+srvgov ctx use|list|current|delete
+srvgov ctx export <name> [--include-credentials] -o json     # 默认脱敏 密码/私钥口令
+srvgov ctx import -f ctx.yaml [--rename <new>] --yes -o json
+srvgov ctx migrate-credentials --to encrypted-file [--context <name>] -o json
 
-# R1
-srvgov exec "touch /tmp/deploy-ready" \
-  --reason "mark deployment ready" --yes -o json
+# RBAC(写路径):reader → R0,writer → R2,admin → R3
+srvgov ctx role set <ctx> --target-operator alice --role writer -o json
+srvgov ctx role list <ctx> -o json
 
-# R2
-srvgov exec "custom-maintenance-command" \
-  --reason "scheduled maintenance" --ticket OPS-123 --yes -o json
+# 审计(防篡改;读取时再次脱敏)
+srvgov audit query [--limit 50] [--type authorization.denied] [--status denied] -o json
+srvgov audit verify -o json
+srvgov audit prune (--before <30d|YYYY-MM-DD> | --keep-last <n>) [--confirm] -o json
 
-# R3
-srvgov exec "rm -rf /tmp/old-release" \
-  --reason "remove failed release" \
-  --ticket OPS-123 --allow-destructive --yes -o json
-```
-
-命令以非 PTY 方式运行。command、stdout、stderr 在返回调用方和写审计前都会
-脱敏。远端非零退出仍返回结构化结果，并以 7 (`BACKEND_ERROR`) 退出。
-
-## SSH 信任与凭据
-
-首次连接未知 `host:port` 时，公钥固定到 `~/.srvgov/known_hosts`。后续密钥
-不匹配，或已知地址突然出现未固定的新密钥类型，都会被拒绝。合法轮换需要人工
-核验并清理旧 pin；不存在跳过校验的开关。
-
-认证顺序为私钥、SSH agent、password，并受 context 的 `--auth-method` 控制。
-password 和私钥口令可使用 opskit-core credstore 引用。SSH 传输层不记录凭据
-或原始命令输出。
-
-## 审计与诊断
-
-```bash
-srvgov capabilities -o json
-srvgov audit query -o json
-srvgov audit query --type authorization.denied --status denied -o json
-srvgov audit verify --strict -o json
-srvgov audit prune --keep-last 20 -o json
+# 诊断与生态
 srvgov doctor -o json
-srvgov version -o json
-srvgov --version
+srvgov capabilities -o json
+srvgov completion bash|zsh|fish|powershell
+srvgov install <agent> --skills      # 安装 srvgov AI 技能(claude、codex …)
+srvgov version
 ```
+</details>
 
-默认审计日志位于 `~/.srvgov/audit.log`，记录有效风险、授权状态、目标、脱敏后
-的命令/输出、远端退出码和错误信息。
+---
 
-`capabilities` 会如实报告当前命令面、`srvgov.io/context/v1`、
-`srvgov.io/audit/v1`、R0-R3 授权规则、`--allow-destructive`、JSONL 审计、
-reader/writer/admin RBAC、dry-run、严格 TOFU 和脱敏能力。
+## 🛡️ 安全模型
 
-## AI Skill
+- **严格 TOFU 主机密钥绑定**——首次连接时绑定;已知主机的密钥变更或新类型为硬失败,需人工重新绑定。无不安全旁路。
+- **fail-closed、结构感知分类**——分类器检查管道、重定向、链式、替换与特权;未知或含糊命令升档,绝不降档。
+- **输出前与审计前均脱敏**——密钥绝不到达你的终端或审计日志。`file write` 只审计路径、字节数、SHA-256——绝不记文件内容。
+- **非 PTY 执行**、有界读取、无 SFTP——攻击面被刻意收窄。
+
+---
+
+## 🤖 给 AI 智能体
+
+- 先跑 `srvgov capabilities -o json` 了解受治理命令面;处处用 `-o json`。
+- 风险与所需授权取自 `exec --dry-run`(及各命令的 `--dry-run`),**绝不**靠自己推理。
+- **绝不自我填入 `--ticket`、`--allow-destructive` 或高风险 `--yes`**——把所需人类审批上报,然后停下。用 `--non-interactive` 让缺失的授权被返回,而非弹出提示。
 
 ```bash
-srvgov install claude --skills
-srvgov install codex --skills
-srvgov install /custom/skills/path --skills
+srvgov install claude --skills     # 也支持:codex、opencode、copilot、cursor、windsurf、aider、cc-switch
 ```
 
-## 从源码构建
+---
+
+## 🔏 供应链可信与校验
+
+- **签名二进制**——每个发布产物都用 [cosign](https://github.com/sigstore/cosign) 无密钥(OIDC)签名;签名的 `checksums.txt` 覆盖全平台。
+- **npm provenance**——由 CI 经 OpenID Connect 发布,带 [provenance 溯源声明](https://docs.npmjs.com/generating-provenance-statements),将包与本仓库及工作流关联。
+- **校验式安装**——npm postinstall 在安装前对照签名的 `checksums.txt` 校验二进制 SHA-256。
+- **防篡改审计**——`srvgov audit verify` 重走日志并报告任何断裂或改动。
+
+---
+
+## 🏗️ 从源码构建与贡献
 
 ```bash
+git clone https://github.com/JiangHe12/srvgov-cli && cd srvgov-cli
 go build ./...
 go test -count=1 ./...
-gofmt -l main.go cmd internal
+gofmt -l main.go cmd internal      # 必须无输出
 golangci-lint run --timeout=5m
 go vet -tags=integration ./...
 ```
 
-## 贡献、安全、许可证
+详见 [CONTRIBUTING.md](CONTRIBUTING.md) 与安全策略 [SECURITY.md](SECURITY.md)。
 
-见 [CONTRIBUTING.md](CONTRIBUTING.md)、[SECURITY.md](SECURITY.md) 和
-[LICENSE](LICENSE)。
+srvgov-cli 构建于共享治理引擎 [`opskit-core`](https://github.com/JiangHe12/opskit-core) 之上,是面向 AI 智能体的 **opskit** 治理型 CLI 家族的一员——同族还有 [`cfgov-cli`](https://www.npmjs.com/package/cfgov-cli)(配置 & Sentinel 规则)与 [`dbgov-cli`](https://www.npmjs.com/package/dbgov-cli)(数据库)。
+
+---
+
+## 📄 许可证
+
+[MIT](LICENSE) © JiangHe12

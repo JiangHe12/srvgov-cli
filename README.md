@@ -1,301 +1,272 @@
+<div align="center">
+
 # srvgov-cli
 
-[English](README.md) | [中文](README_zh.md)
+**Governed remote-server operations over SSH for humans _and_ AI agents.**
 
-Governed remote server command execution for AI agents and operators. `srvgov`
-combines fail-closed command classification, R0-R3 authorization, strict TOFU
-SSH host-key pinning, output redaction, and structured audit records.
+Run commands, control services, edit files, and manage containers on remote machines — every command is classified for risk, previewable, runs over strict TOFU-pinned SSH, is redacted, and is audited. Safe enough to fan out across a fleet, and safe enough to hand to an AI.
 
-## Install
+[![npm version](https://img.shields.io/npm/v/srvgov-cli.svg)](https://www.npmjs.com/package/srvgov-cli)
+[![CI](https://github.com/JiangHe12/srvgov-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/JiangHe12/srvgov-cli/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/srvgov-cli.svg)](LICENSE)
+[![signed](https://img.shields.io/badge/release-cosign%20%2B%20npm%20provenance-blue.svg)](#-trust--verification)
+
+[English](README.md) · [简体中文](README_zh.md)
+
+</div>
+
+---
+
+## 🧭 What is this? (read me first)
+
+SSH-ing into a production server and running commands is powerful and terrifying in equal measure: one `rm -rf` in the wrong directory, one `systemctl stop` of the wrong service, and there's no preview, no second opinion, and often no record. Giving a raw shell to an automation script or an AI agent multiplies the risk.
+
+**srvgov-cli wraps every remote operation in guardrails.** Think of it as a careful SRE standing between you and the server:
+
+- 🧠 **Classifies the command before running it** — a structure-aware classifier reads the *whole* command line (pipes, redirects, `sudo`, substitutions) and assigns a risk level. Unknown or ambiguous? It fails closed to a higher tier.
+- 🛡️ **Scales the friction to the danger** — a read just runs; a benign change needs a reason and a confirmation; a destructive or privileged command needs a change ticket *and* an explicit "allow destructive" flag.
+- 👀 **Prefers structured observation** — `status`, `ports`, `logs`, `file`, `svc`, and `docker` give you safe, fixed-shape reads instead of hand-rolled shell.
+- 🔒 **Pins host keys with strict TOFU** — a changed or new-type key for a known host is a hard failure, never a silent accept.
+- 🛰️ **Fans out across a fleet safely** — target many servers by name or label; every target is authorized *before any* SSH starts, and each is audited separately.
+- 🤖 **Is safe to hand to an AI agent** — it can observe and preview freely, but **cannot** invent the human approvals destructive actions require.
+
+Output is redacted and every action lands in a tamper-evident audit log.
+
+---
+
+## ✨ Features
+
+| | |
+|---|---|
+| ⌨️ **Governed `exec`** | run one shell command; a fail-closed, structure-aware classifier sets its risk tier and required authorization. |
+| 👀 **Structured observation** | `status`, `ports`, `logs`, `file read/stat/list`, `svc status`, `docker list/inspect/logs` — audited R0 reads, redacted, no `sudo`. |
+| 🔧 **Fixed-verb control** | `svc start/stop/restart/reload/enable/disable`, `file write`, `docker start/stop/restart/rm` — no arbitrary `systemctl`/`docker` surface. |
+| 🚦 **R0–R3 governance** | every command risk-classified; protected contexts escalate one tier; AI callers can never self-authorize. |
+| 🛰️ **Fleet fanout** | `--targets a,b,c` or `--selector key=value` (label match); reads are capped at R0; writes authorize **all** targets before any SSH. |
+| 🔒 **Strict TOFU SSH** | host keys pinned on first use; a changed key is rejected pending manual review. Non-PTY execution. |
+| 👥 **RBAC & contexts** | per-context `reader` / `writer` / `admin` roles; portable context export/import; credential backends. |
+| 🧹 **Redaction everywhere** | secrets scrubbed from output **and** before audit persistence; file writes audit only path + bytes + SHA-256, never content. |
+| 📜 **Tamper-evident audit** | every action (including denials) hash-chained; `audit verify` detects tampering. |
+| 🔏 **Trusted supply chain** | **cosign-signed** binaries, npm **provenance**, and a **SHA-256**-verified installer. |
+
+---
+
+## 📦 Install
 
 ```bash
 npm install -g srvgov-cli
-# or
-go install github.com/JiangHe12/srvgov-cli@latest
 ```
 
-GitHub Releases provide Linux, macOS, and Windows binaries for amd64 and arm64.
-The npm package downloads the matching release binary and verifies SHA-256
-checksums by default.
+This installs a tiny launcher; on first run it downloads the right pre-built binary for your OS/arch from the signed [GitHub Release](https://github.com/JiangHe12/srvgov-cli/releases) and **verifies its SHA-256** before use. Requires Node.js ≥ 14 for the installer (the CLI itself is a self-contained Go binary).
 
-## Quickstart
+<details>
+<summary>Other ways to install</summary>
+
+- **Direct download** — grab the binary from the [Releases page](https://github.com/JiangHe12/srvgov-cli/releases), verify it against the cosign-signed `checksums.txt`, put it on your `PATH`, and rename it to `srvgov`.
+- **From source** — `go install github.com/JiangHe12/srvgov-cli@latest` (Go 1.22+).
 
 ```bash
-srvgov ctx set dev --server ssh://alice@example.com:22 --identity-file ~/.ssh/id_ed25519 -o json
-srvgov ctx use dev -o json
+srvgov version
+srvgov doctor -o json
+```
+
+</details>
+
+---
+
+## 🚀 Quick start (60 seconds)
+
+```bash
+# 1. Define a server context (SSH target, key, labels) — host key is pinned on first connect
+srvgov ctx set prod --server ssh://deploy@example.com:22 \
+  --identity-file ~/.ssh/id_ed25519 --env production --label env=prod --label role=web --protected
+srvgov ctx use prod
+
+# 2. Observe with structured reads — these are free (R0) and audited
 srvgov status -o json
-srvgov ports -o json
-srvgov logs --unit sshd --since "1 hour ago" --lines 50 -o json
-srvgov svc status sshd -o json
-srvgov file stat /etc/hosts -o json
-srvgov docker list -o json
-srvgov exec --dry-run "uptime" -o json
+srvgov logs --unit nginx --since "30 minutes ago" --lines 100 -o json
+
+# 3. Preview any command's risk before running it — dry-run only classifies, no SSH
+srvgov exec --dry-run "systemctl restart nginx" -o json
+
+# 4. Run a read (R0) directly
 srvgov exec "uptime" -o json
-srvgov audit query --limit 20 -o json
+
+# 5. Make a governed change — a service restart is R2: needs reason + ticket + confirmation
+srvgov svc restart nginx --reason "apply reviewed config" --ticket OPS-123 --yes -o json
 ```
 
-Use `-o json` for automation and AI agents.
+> 💡 **Tip:** create production contexts with `--protected`. srvgov then raises every change one risk tier in that context (R2 → R3, additionally requiring `--allow-destructive`).
 
-## Governance Model
+---
 
-| Risk | Meaning | Authorization |
-|---|---|---|
-| R0 | known read-only command | free to run, still audited |
-| R1 | known benign change | `--reason` and `--yes` |
-| R2 | unknown or elevated command | `--reason`, non-empty `--ticket`, and `--yes` |
-| R3 | destructive, privileged, dynamic, or parser-uncertain command | `--reason`, `--ticket`, `--allow-destructive`, and `--yes` |
+## 🔐 The governance model (the important part)
 
-Protected contexts raise R1 to R2 and R2 to R3. AI agents must never auto-fill
-`--ticket`, `--allow-destructive`, or high-risk `--yes`. Use `exec --dry-run`
-to obtain the classifier's risk and required authorization; do not guess impact.
+A structure-aware classifier reads the **whole** command and assigns a risk tier. The classifier's verdict — not your intention — is authoritative, and it fails closed (unknown/ambiguous → higher tier).
 
-## Contexts
+| Tier | What it covers | What you must provide |
+|:---:|---|---|
+| **R0** | Known read-only commands & structured observation (`status`, `ports`, `logs`, `file read`, `svc status`, `docker inspect`) | Nothing — but it's still audited |
+| **R1** | Known benign changes | `--reason` **and** `--yes` |
+| **R2** | Unknown / elevated commands; `svc` & `docker` lifecycle; `file write` | `--reason`, a non-empty `--ticket`, **and** `--yes` |
+| **R3** | Destructive, privileged, dynamic, or parser-uncertain commands | the above **plus** `--allow-destructive` |
+
+**Protected contexts raise every change one tier** (R1→R2, R2→R3). Three rules keep this safe — especially for automation:
+
+1. **Risk & impact come from the tool, not a guess.** Use `exec --dry-run` to get the classification and required authorization. srvgov fails closed rather than guessing.
+2. **Host trust is strict.** SSH host keys are pinned on first use (TOFU); a changed or new-type key for a known host is rejected pending manual review — there is no insecure bypass.
+3. **🤖 AI agents must never invent `--ticket`, `--allow-destructive`, or a high-risk `--yes`.** Those are *human* authorization inputs. An agent should surface "this needs approval X" and stop.
+
+---
+
+## 📚 Command reference
+
+`srvgov <command> [flags]`. Add `-o json` for machine-readable output, `--help` on any command for its full flags, and `srvgov capabilities -o json` for the full governed surface.
+
+<details open>
+<summary><b>exec</b> — one governed command</summary>
 
 ```bash
-srvgov ctx set prod \
-  --server ssh://deploy@example.com:22 \
-  --identity-file ~/.ssh/id_ed25519 \
-  --auth-method private-key,agent,password \
-  --env production \
-  --label env=prod \
-  --label role=web \
-  --protected \
-  -o json
-
-srvgov ctx use prod -o json
-srvgov ctx current -o json
-srvgov ctx list -o json
-srvgov ctx delete old-host -o json
-srvgov ctx role set prod --target-operator alice --role writer -o json
-srvgov ctx role list prod -o json
-srvgov ctx export prod > prod.ctx.yaml
-srvgov ctx import -f prod.ctx.yaml --rename prod-copy --yes -o json
-srvgov ctx migrate-credentials --to encrypted-file --context prod -o json
+srvgov exec --dry-run "systemctl restart nginx" -o json   # classify only; no SSH, no audit event
+srvgov exec "uptime" -o json                               # R0
+srvgov exec "touch /tmp/ready" --reason "mark ready" --yes -o json                         # R1
+srvgov exec "custom-maint" --reason "maintenance" --ticket OPS-123 --yes -o json           # R2
+srvgov exec "rm -rf /tmp/old" --reason "cleanup" --ticket OPS-123 --allow-destructive --yes -o json  # R3
 ```
+</details>
 
-Context output never includes passwords, private-key contents, passphrases, or
-identity-file paths.
-
-`ctx set` accepts repeated `--label key=value` flags. Labels are non-secret
-metadata shown by `ctx list` and `ctx current`, exported/imported with portable
-contexts, and used by fanout `--selector`. A `ctx set` call replaces that
-context's label set with the labels supplied in the call.
-
-Portable context export uses `srvgov.io/ctx-export/v1`. Literal password and
-SSH identity passphrase values are redacted by default; credstore references are
-preserved. `--include-credentials` is limited to plain-yaml contexts.
-
-## Observe Before Acting
-
-The observation commands turn common read-only SSH output into stable JSON:
+<details>
+<summary><b>Observe</b> — structured R0 reads (redacted, never <code>sudo</code>)</summary>
 
 ```bash
 srvgov status -o json
-srvgov ports -o json
-srvgov status --targets web-a,web-b --concurrency 5 -o json
-srvgov logs --targets web-a,web-b --unit nginx --lines 100 -o json
+srvgov ports  -o json
 srvgov logs --unit nginx --since "30 minutes ago" --priority warning --lines 100 -o json
 srvgov logs --file /var/log/nginx/error.log --grep "upstream" --lines 100 -o json
-```
-
-Each underlying remote command is independently classified and authorized
-through the same governance path as `exec`; probes are never joined with shell
-operators. `ports` falls back from `ss` to `netstat`. Unit logs fall back from
-`journalctl` to `systemctl status` when journalctl is unavailable. No command
-adds `sudo`; unavailable PID/process fields remain empty. Log text, process
-names, generated command text, caller output, and audit records are redacted.
-
-### Fleet fanout
-
-`status`, `ports`, `logs`, and governed action commands accept comma-separated
-context names, or a label selector:
-
-```bash
-srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
-srvgov ports --targets web-a,web-b,web-c -o json
-srvgov logs --selector env=prod,role=web --unit nginx --lines 100 -o json
-srvgov exec --targets web-a,web-b,web-c "uptime" -o json
-srvgov exec --targets web-a,web-b,web-c --dry-run "systemctl restart nginx" -o json
-srvgov exec --selector env=prod,role=web --dry-run "systemctl restart nginx" -o json
-srvgov exec --targets web-a,web-b,web-c "systemctl restart nginx" \
-  --reason "restart reviewed service" --ticket OPS-123 --yes -o json
-```
-
-Selectors use `key=value,key2=value2` AND matching against context labels.
-`--targets`, `--selector`, and `--context` are mutually exclusive. `status`,
-`ports`, and `logs` remain strictly R0-only, including every fallback command
-they may run. `exec` uses two-phase authorize-all: it classifies and
-non-interactively authorizes every sorted target before any SSH execution. If
-one target rejects the ticket, role, confirmation, or required allow flag, the
-whole batch stops with zero partial writes. After all targets pass, execution
-is concurrent and each target re-authorizes immediately before SSH. Dry-run
-does not authorize or connect; it reports the resolved target set, each
-target's real base/effective risk, and `maxEffectiveRiskTier`. Targets are
-deduplicated and sorted, each target is audited independently, and one remote
-execution failure does not stop the others. Any per-target execution failure
-returns exit code 7 after emitting the complete result.
-
-## Service Control
-
-`svc` exposes only a fixed service-operation whitelist. Unit names are treated
-as literal shell words, and every generated `systemctl` command goes through
-the same classifier and authorization path as `exec`.
-
-```bash
-# R0 read, still audited
-srvgov svc status nginx -o json
-
-# R2 change: human-supplied reason, ticket, and confirmation
-srvgov svc restart nginx \
-  --reason "apply reviewed configuration" --ticket OPS-123 --yes -o json
-```
-
-Available actions are `status`, `start`, `stop`, `restart`, `reload`, `enable`,
-and `disable`, for one unit at a time. Protected contexts raise service changes
-from R2 to R3 and additionally require human-supplied `--allow-destructive`.
-`svc` does not expose power, isolate, mask, or arbitrary systemctl operations.
-
-## File Operations
-
-File reads are structured R0 operations and remain audited:
-
-```bash
 srvgov file read /etc/hosts --max-bytes 1048576 -o json
 srvgov file stat /etc/hosts -o json
 srvgov file list /var/log -o json
-```
-
-Writes use `tee -- '<path>'` with content streamed over SSH stdin. They are R2
-for ordinary paths and R3 for sensitive paths such as SSH authorization files,
-shell dotfiles, and crontabs.
-
-```bash
-printf '%s\n' 'enabled=true' | srvgov file write /tmp/app.conf \
-  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
-
-srvgov file write /tmp/app.conf --content "enabled=true" \
-  --reason "update reviewed configuration" --ticket OPS-123 --yes -o json
-```
-
-Without `--content`, stdin is the file content and explicit `--yes` is required
-before authorization. With `--content`, stdin is never read and interactive
-confirmation remains available. Write output and audit records never contain
-file content; audit stores only the redacted path, byte count, and SHA-256.
-Writes are direct and non-atomic; temporary-file plus rename is not implemented
-in this release. `file` never uses SFTP and never adds `sudo`.
-
-## Docker Governance
-
-Docker reads provide stable, redacted structures:
-
-```bash
+srvgov svc status nginx -o json
 srvgov docker list -o json
-srvgov docker inspect api -o json
+srvgov docker inspect api -o json          # fixed safe field subset; excludes Env
 srvgov docker logs api --tail 100 -o json
 ```
+</details>
 
-`docker list`, `inspect`, and `logs` are audited R0 operations. Inspect uses a
-remote fixed-field projection and excludes container environment variables and
-the full inspect document. Logs default to 100 lines and accept `--tail`
-between 1 and 10000.
-
-Lifecycle changes are R2 and require human authorization:
+<details>
+<summary><b>Control</b> — fixed verbs (R2, or R3 in protected contexts)</summary>
 
 ```bash
-srvgov docker restart api \
-  --reason "restart after reviewed deployment" --ticket OPS-123 --yes -o json
+# systemd (one literal unit; no arbitrary subcommands)
+srvgov svc restart nginx --reason "apply reviewed config" --ticket OPS-123 --yes -o json
+#   verbs: start | stop | restart | reload | enable | disable
+
+# file write (no SFTP; audit stores path + bytes + SHA-256, never content)
+srvgov file write /tmp/app.conf --content "enabled=true" --reason "update config" --ticket OPS-123 --yes -o json
+#   without --content, stdin is streamed as the file body and --yes is mandatory
+
+# docker container lifecycle (fixed to start | stop | restart | rm)
+srvgov docker restart api --reason "restart after deploy" --ticket OPS-123 --yes -o json
 ```
 
-The fixed whitelist contains only `ps`/`list`, `inspect`, `logs`, `start`,
-`stop`, `restart`, and `rm`, one container at a time. It never exposes Docker
-run, create, exec, build, copy, compose, or prune. Protected contexts raise
-lifecycle changes to R3 and require human-supplied `--allow-destructive`.
-Container identifiers are shell-quoted.
+Sensitive paths or protected contexts raise writes/lifecycle to R3 and additionally require `--allow-destructive`. The `svc` and `docker` verbs intentionally do **not** expose arbitrary `systemctl` or `docker run/exec/build/compose/prune` surface — use `exec --dry-run` if a human explicitly needs something outside the fixed set.
+</details>
 
-## Governed Execution
-
-Preview without connecting or executing:
+<details>
+<summary><b>Fleet fanout</b> — <code>--targets</code> / <code>--selector</code></summary>
 
 ```bash
-srvgov exec --dry-run "touch /tmp/deploy-ready" -o json
+srvgov status --targets web-a,web-b,web-c --concurrency 5 -o json
+srvgov logs --selector env=prod,role=web --unit nginx --lines 100 -o json
+srvgov exec --selector env=prod,role=web --dry-run "systemctl restart nginx" -o json
+srvgov svc restart nginx --targets web-a,web-b --reason "rollout" --ticket OPS-123 --yes -o json
+srvgov file stat /etc/hosts --targets web-a,web-b -o json
 ```
 
-Execute according to the reported tier:
+- `--selector key=value,key2=value2` AND-matches context labels. `--targets`, `--selector`, and `--context` cannot be combined.
+- `status` / `ports` / `logs` have a hard **R0 ceiling** across all targets (including fallbacks).
+- Multi-target `exec` / `svc` / `file` / `docker` **authorize every target first** and start no SSH unless all targets pass; human reason/ticket/confirmation/allow flags are reused but **re-validated independently** against each target's effective risk, ticket pattern, and RBAC.
+- Use `--dry-run` to inspect the resolved target set and each target's `maxEffectiveRiskTier` — dry-run never connects, authorizes, or audits. Results are target-sorted, failures isolated, each target audited separately.
+</details>
+
+<details>
+<summary><b>Contexts, roles, audit & diagnostics</b></summary>
 
 ```bash
-# R0
-srvgov exec "systemctl status nginx" -o json
+# Contexts (labels are non-secret; each ctx set replaces the label set)
+srvgov ctx set <name> --server ssh://user@host:22 --identity-file <key> [--env <e>] [--label k=v] [--protected]
+srvgov ctx use|list|current|delete
+srvgov ctx export <name> [--include-credentials] -o json     # redacts password/passphrase by default
+srvgov ctx import -f ctx.yaml [--rename <new>] --yes -o json
+srvgov ctx migrate-credentials --to encrypted-file [--context <name>] -o json
 
-# R1
-srvgov exec "touch /tmp/deploy-ready" \
-  --reason "mark deployment ready" --yes -o json
+# RBAC (write paths): reader → R0, writer → R2, admin → R3
+srvgov ctx role set <ctx> --target-operator alice --role writer -o json
+srvgov ctx role list <ctx> -o json
 
-# R2
-srvgov exec "custom-maintenance-command" \
-  --reason "scheduled maintenance" --ticket OPS-123 --yes -o json
+# Audit (tamper-evident; output re-redacted on read)
+srvgov audit query [--limit 50] [--type authorization.denied] [--status denied] -o json
+srvgov audit verify -o json
+srvgov audit prune (--before <30d|YYYY-MM-DD> | --keep-last <n>) [--confirm] -o json
 
-# R3
-srvgov exec "rm -rf /tmp/old-release" \
-  --reason "remove failed release" \
-  --ticket OPS-123 --allow-destructive --yes -o json
-```
-
-Commands run without a PTY. stdout, stderr, command text, and audit fields are
-redacted before output or persistence. A remote non-zero exit returns structured
-output and process exit code 7 (`BACKEND_ERROR`).
-
-## SSH Trust And Credentials
-
-The first connection to an unknown `host:port` pins its SSH public key in
-`~/.srvgov/known_hosts`. Later key mismatches, including an unpinned key type
-for an already known address, are rejected. Host-key rotation requires manual
-review and removal of the old pin; there is no insecure bypass.
-
-Authentication order is private key, SSH agent, then password, subject to the
-context's `--auth-method` preference. Passwords and key passphrases may use
-opskit-core credential-store references. Credentials and raw SSH output are not
-logged by the transport.
-
-## Audit And Diagnostics
-
-```bash
-srvgov capabilities -o json
-srvgov audit query -o json
-srvgov audit query --type authorization.denied --status denied -o json
-srvgov audit verify --strict -o json
-srvgov audit prune --keep-last 20 -o json
+# Diagnostics & ecosystem
 srvgov doctor -o json
-srvgov version -o json
-srvgov --version
+srvgov capabilities -o json
+srvgov completion bash|zsh|fish|powershell
+srvgov install <agent> --skills      # install the srvgov AI skill (claude, codex, …)
+srvgov version
 ```
+</details>
 
-Audit records live at `~/.srvgov/audit.log` by default and include effective
-risk, authorization status, target, redacted command/output, exit code, and
-error details.
+---
 
-`capabilities` reports the current command surface, `srvgov.io/context/v1`,
-`srvgov.io/audit/v1`, R0-R3 authorization rules, `--allow-destructive`, JSONL
-audit, RBAC reader/writer/admin, dry-run, strict TOFU, and redaction.
+## 🛡️ Security model
 
-## AI Skill
+- **Strict TOFU host-key pinning** — keys pinned on first connect; a changed or new-type key for a known host is a hard failure requiring manual re-pin. No insecure bypass.
+- **Fail-closed, structure-aware classification** — the classifier inspects pipes, redirects, chaining, substitutions, and privilege; unknown or ambiguous commands escalate, never downgrade.
+- **Redaction before output and before audit** — secrets never reach your terminal or the audit log. `file write` audits only path, byte count, and SHA-256 — never file content.
+- **Non-PTY execution**, bounded reads, and no SFTP — the attack surface is deliberately small.
+
+---
+
+## 🤖 For AI agents
+
+- Run `srvgov capabilities -o json` first to learn the governed surface; use `-o json` everywhere.
+- Get risk and required authorization from `exec --dry-run` (and each command's `--dry-run`), **never** from your own reasoning.
+- **Never self-fill `--ticket`, `--allow-destructive`, or a high-risk `--yes`** — surface the required human approval and stop. Use `--non-interactive` so missing authorization is returned, not prompted.
 
 ```bash
-srvgov install claude --skills
-srvgov install codex --skills
-srvgov install /custom/skills/path --skills
+srvgov install claude --skills     # also: codex, opencode, copilot, cursor, windsurf, aider, cc-switch
 ```
 
-## Build
+---
+
+## 🔏 Trust & verification
+
+- **Signed binaries** — every release artifact is signed with [cosign](https://github.com/sigstore/cosign) (keyless / OIDC); a signed `checksums.txt` covers all platforms.
+- **npm provenance** — published from CI via OpenID Connect with [provenance attestations](https://docs.npmjs.com/generating-provenance-statements) tying the package to this repo and workflow.
+- **Verified installs** — the npm postinstall checks the binary's SHA-256 against the signed `checksums.txt` before installing.
+- **Tamper-evident audit** — `srvgov audit verify` re-walks the log and reports any gap or modification.
+
+---
+
+## 🏗️ Build from source & contribute
 
 ```bash
+git clone https://github.com/JiangHe12/srvgov-cli && cd srvgov-cli
 go build ./...
 go test -count=1 ./...
-gofmt -l main.go cmd internal
+gofmt -l main.go cmd internal      # must print nothing
 golangci-lint run --timeout=5m
 go vet -tags=integration ./...
 ```
 
-## Contributing, Security, License
+See [CONTRIBUTING.md](CONTRIBUTING.md) and the security policy in [SECURITY.md](SECURITY.md).
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
-[LICENSE](LICENSE).
+srvgov-cli is built on the shared [`opskit-core`](https://github.com/JiangHe12/opskit-core) governance engine and is part of the **opskit** family of governed CLIs for AI agents — alongside [`cfgov-cli`](https://www.npmjs.com/package/cfgov-cli) (config & Sentinel rules) and [`dbgov-cli`](https://www.npmjs.com/package/dbgov-cli) (databases).
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) © JiangHe12
