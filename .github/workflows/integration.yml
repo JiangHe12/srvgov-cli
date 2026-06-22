@@ -1,0 +1,74 @@
+name: Integration
+
+# Real-backend integration test (//go:build integration), run against a live
+# OpenSSH server started on the runner. Kept SEPARATE from the push/PR CI and
+# the release pipeline so a slow container boot or a transient registry flake
+# never blocks everyday commits or a release. Runs nightly and on manual
+# dispatch only.
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # daily 04:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: real-OpenSSH integration (sshexec)
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+          cache: true
+
+      - name: Start OpenSSH server
+        shell: bash
+        run: |
+          ssh-keygen -t ed25519 -N '' -f "$HOME/it_key" -q
+          for i in 1 2 3; do
+            docker pull linuxserver/openssh-server:latest && break
+            echo "image pull retry $i"; sleep 5
+          done
+          docker run -d --name srvgov-it-sshd -p 2222:2222 \
+            -e PUID=1000 -e PGID=1000 -e USER_NAME=svcgovit \
+            -e PUBLIC_KEY="$(cat "$HOME/it_key.pub")" -e PASSWORD_ACCESS=false \
+            linuxserver/openssh-server:latest
+
+      - name: Wait for sshd
+        shell: bash
+        run: |
+          # GitHub's bash runs with `set -e`; a not-yet-ready probe must not
+          # abort before the retry loop can poll, so disable errexit here.
+          set +e
+          ok=0
+          for i in $(seq 1 40); do
+            if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                   -o ConnectTimeout=3 -i "$HOME/it_key" -p 2222 \
+                   svcgovit@127.0.0.1 true 2>/dev/null; then
+              ok=1; echo "sshd ready after $((i * 2))s"; break
+            fi
+            sleep 2
+          done
+          [ "$ok" = 1 ] || { echo "sshd not ready"; docker logs --tail 40 srvgov-it-sshd; exit 1; }
+
+      - name: Run integration test
+        shell: bash
+        env:
+          SRVGOV_IT_SSH_ADDR: 127.0.0.1:2222
+          SRVGOV_IT_SSH_USER: svcgovit
+        run: |
+          export SRVGOV_IT_SSH_KEY="$HOME/it_key"
+          go test -tags=integration -count=1 -v ./internal/sshexec/
+
+      - name: Tear down OpenSSH server
+        if: always()
+        shell: bash
+        run: docker rm -f srvgov-it-sshd || true
