@@ -28,6 +28,8 @@ go vet -tags=integration ./...
 npm pack --dry-run
 ```
 
+A real-backend integration test (`//go:build integration`, env-gated on `SRVGOV_IT_SSH_*`, skipped by default) exercises `internal/sshexec` against a live OpenSSH container in the nightly `integration.yml` workflow, not on push/PR.
+
 ## Governance Rules
 
 - R0 is free but audited. R1 needs `--reason` and `--yes`. R2 also needs a
