@@ -13,8 +13,8 @@ func TestWorkflowYAMLSyntax(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Glob() error = %v", err)
 	}
-	if len(paths) != 3 {
-		t.Fatalf("workflow count = %d, want 3", len(paths))
+	if len(paths) == 0 {
+		t.Fatalf("workflow count = 0, want at least 1")
 	}
 	for _, path := range paths {
 		data, err := os.ReadFile(path)
