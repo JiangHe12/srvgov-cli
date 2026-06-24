@@ -263,7 +263,7 @@ go vet -tags=integration ./...
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the security policy in [SECURITY.md](SECURITY.md).
 
-srvgov-cli is built on the shared [`opskit-core`](https://github.com/JiangHe12/opskit-core) governance engine and is part of the **opskit** family of governed CLIs for AI agents — alongside [`cfgov-cli`](https://www.npmjs.com/package/cfgov-cli) (config & Sentinel rules) and [`dbgov-cli`](https://www.npmjs.com/package/dbgov-cli) (databases).
+srvgov-cli is built on the shared [`opskit-core`](https://github.com/JiangHe12/opskit-core) governance engine and is part of the **opskit** family of governed CLIs for AI agents — alongside [`dbgov-cli`](https://www.npmjs.com/package/dbgov-cli) (databases), [`cfgov-cli`](https://www.npmjs.com/package/cfgov-cli) (config & Sentinel rules), and [`mqgov-cli`](https://www.npmjs.com/package/mqgov-cli) (message brokers).
 
 ---
 
