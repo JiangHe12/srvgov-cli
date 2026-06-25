@@ -3,9 +3,11 @@ module github.com/JiangHe12/srvgov-cli
 go 1.25.0
 
 require (
-	github.com/JiangHe12/opskit-core v1.0.5
+	github.com/JiangHe12/opskit-core v1.1.0
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.9
 	golang.org/x/crypto v0.52.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -25,7 +27,6 @@ require (
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/mattn/go-runewidth v0.0.9 // indirect
 	github.com/olekukonko/tablewriter v0.0.5 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/zalando/go-keyring v0.2.8 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/otel v1.44.0 // indirect
@@ -45,5 +46,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/grpc v1.81.1 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

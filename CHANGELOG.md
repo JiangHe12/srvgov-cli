@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.8.1
+
+### Changed
+
+- Migrated SSH host-key trust-on-first-use pinning to the shared
+  `opskit-core/trust` package (opskit-core v1.1.0). Host-key pinning behavior,
+  the on-disk `known_hosts` format, error messages, and exit codes are
+  unchanged; this replaces the duplicated local trust store with the shared
+  engine implementation.
+
 ## v0.8.0
 
 ### Added
