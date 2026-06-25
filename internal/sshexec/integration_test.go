@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/JiangHe12/opskit-core/apperrors"
 	corectx "github.com/JiangHe12/opskit-core/ctx"
 
@@ -72,10 +74,7 @@ func TestIntegrationOpenSSHRealServerTOFUStdinAndShellQuoting(t *testing.T) {
 		t.Fatalf("Run(stderr) stderr = %q, want marker", stderr.Stderr)
 	}
 
-	pins, err := loadPins(knownHostsPath)
-	if err != nil {
-		t.Fatalf("loadPins() error = %v", err)
-	}
+	pins := readKnownHostPins(t, knownHostsPath)
 	if len(pins) == 0 {
 		t.Fatalf("known_hosts has no TOFU pin")
 	}
@@ -178,9 +177,14 @@ func pinForAddress(t *testing.T, pins []Pin, address string) Pin {
 func tamperedPinLine(t *testing.T, original Pin) string {
 	t.Helper()
 	_, signer := newTestKey(t)
-	replacement := pinFor(original.Address, signer.PublicKey())
+	replacementKey := signer.PublicKey()
+	replacement := Pin{
+		Address:     original.Address,
+		KeyType:     replacementKey.Type(),
+		Fingerprint: ssh.FingerprintSHA256(replacementKey),
+		PublicKey:   base64.StdEncoding.EncodeToString(replacementKey.Marshal()),
+	}
 	replacement.KeyType = original.KeyType
-	replacement.PublicKey = base64.StdEncoding.EncodeToString(signer.PublicKey().Marshal())
 	return fmt.Sprintf("%s\t%s\t%s\t%s\n", replacement.Address, replacement.KeyType, replacement.Fingerprint, replacement.PublicKey)
 }
 

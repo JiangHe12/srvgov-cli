@@ -2,11 +2,13 @@ package sshexec
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/pem"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -97,12 +99,17 @@ func TestVerifyOrPinTruthTableByAddress(t *testing.T) {
 		t.Fatalf("ActualKeyType = %q, want %q", changedType.ActualKeyType, rsaKey.Type())
 	}
 
-	stored, err := loadPins(path)
-	if err != nil {
-		t.Fatalf("loadPins() error = %v", err)
-	}
+	stored := readKnownHostPins(t, path)
 	if len(stored) != 1 || stored[0].KeyType != ed25519Key.Type() {
 		t.Fatalf("stored pins = %#v, want only original ed25519 pin", stored)
+	}
+	wantLine := address + "\t" + ed25519Key.Type() + "\t" + ssh.FingerprintSHA256(ed25519Key) + "\t" + base64.StdEncoding.EncodeToString(ed25519Key.Marshal()) + "\n"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(data) != wantLine {
+		t.Fatalf("known_hosts = %q, want %q", data, wantLine)
 	}
 }
 
@@ -129,10 +136,7 @@ func TestRunRejectsNewHostKeyTypeForPinnedAddress(t *testing.T) {
 		t.Fatalf("Address = %q, want %q", changedType.Address, target.Address())
 	}
 
-	stored, loadErr := loadPins(path)
-	if loadErr != nil {
-		t.Fatalf("loadPins() error = %v", loadErr)
-	}
+	stored := readKnownHostPins(t, path)
 	if len(stored) != 1 || stored[0].KeyType != ssh.KeyAlgoED25519 {
 		t.Fatalf("stored pins after rejected rotation = %#v", stored)
 	}
@@ -149,8 +153,35 @@ func TestKnownHostsFileModeIsOwnerOnly(t *testing.T) {
 	if _, err := (Client{KnownHostsPath: path}).Run(context.Background(), "dev", target, "ignored"); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if err := verifyPinFileSecurity(path); err != nil {
-		t.Fatalf("known_hosts security error = %v", err)
+	exists, err := CheckKnownHostsPermissions(path)
+	if err != nil {
+		t.Fatalf("CheckKnownHostsPermissions() error = %v", err)
+	}
+	if !exists {
+		t.Fatal("CheckKnownHostsPermissions() exists = false")
+	}
+}
+
+func TestVerifyOrPinRejectsSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows symlink creation requires privileges not guaranteed in local test runs")
+	}
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target_known_hosts")
+	path := filepath.Join(dir, "known_hosts")
+	if err := os.WriteFile(target, nil, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatalf("Symlink() error = %v", err)
+	}
+
+	err := verifyOrPin(path, "server.example:22", newTestSigner(t).PublicKey(), nil)
+	if err == nil {
+		t.Fatal("verifyOrPin() error = nil, want symlink rejection")
+	}
+	if !strings.Contains(err.Error(), "SSH host-key pin path must be a regular file") {
+		t.Fatalf("verifyOrPin() error = %v", err)
 	}
 }
 
@@ -399,4 +430,34 @@ func registerTestCredentialBackend(values map[string]string) string {
 		return &testCredentialBackend{name: name, values: values}
 	})
 	return name
+}
+
+func readKnownHostPins(t *testing.T, path string) []Pin {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", path, err)
+	}
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return nil
+	}
+	var pins []Pin
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) != 4 {
+			t.Fatalf("known_hosts line %q has %d fields, want 4", line, len(fields))
+		}
+		pins = append(pins, Pin{
+			Address:     fields[0],
+			KeyType:     fields[1],
+			Fingerprint: fields[2],
+			PublicKey:   fields[3],
+		})
+	}
+	return pins
 }
