@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.8.3
+
+### Changed
+
+- Aligned `version` output with the family format: table output is a single
+  line and JSON exposes `built` with `unknown` build metadata defaults.
+
+## v0.8.2
+
+### Changed
+
+- Wrapped all `-o json` command output in the family-standard
+  `{apiVersion, kind, success, data}` envelope.
+
 ## v0.8.1
 
 ### Changed

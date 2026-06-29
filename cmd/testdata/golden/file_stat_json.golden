@@ -1,9 +1,14 @@
 {
-  "path": "/tmp/app.txt",
-  "type": "regular file",
-  "size": 6,
-  "mode": "640",
-  "owner": "alice",
-  "group": "staff",
-  "mtime": "2024-03-09T16:00:00Z"
+  "apiVersion": "srvgov.io/v1",
+  "kind": "FileStat",
+  "success": true,
+  "data": {
+    "path": "/tmp/app.txt",
+    "type": "regular file",
+    "size": 6,
+    "mode": "640",
+    "owner": "alice",
+    "group": "staff",
+    "mtime": "2024-03-09T16:00:00Z"
+  }
 }

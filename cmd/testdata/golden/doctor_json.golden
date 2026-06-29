@@ -1,22 +1,27 @@
 {
-  "checks": [
-    {
-      "name": "config",
-      "status": "ok"
-    },
-    {
-      "name": "current-context",
-      "status": "ok"
-    },
-    {
-      "name": "credential-store",
-      "status": "ok",
-      "message": "plain-yaml"
-    },
-    {
-      "name": "known-hosts",
-      "status": "ok",
-      "message": "not initialized"
-    }
-  ]
+  "apiVersion": "srvgov.io/v1",
+  "kind": "DoctorReport",
+  "success": true,
+  "data": {
+    "checks": [
+      {
+        "name": "config",
+        "status": "ok"
+      },
+      {
+        "name": "current-context",
+        "status": "ok"
+      },
+      {
+        "name": "credential-store",
+        "status": "ok",
+        "message": "plain-yaml"
+      },
+      {
+        "name": "known-hosts",
+        "status": "ok",
+        "message": "not initialized"
+      }
+    ]
+  }
 }

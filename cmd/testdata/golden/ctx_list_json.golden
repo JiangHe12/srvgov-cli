@@ -1,11 +1,22 @@
-[
-  {
-    "name": "dev",
-    "server": "ssh://alice@example.com:22",
-    "host": "example.com",
-    "port": 22,
-    "username": "alice",
-    "protected": false,
-    "current": true
+{
+  "apiVersion": "srvgov.io/v1",
+  "kind": "ContextList",
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "name": "dev",
+        "server": "ssh://alice@example.com:22",
+        "host": "example.com",
+        "port": 22,
+        "username": "alice",
+        "protected": false,
+        "current": true
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 1,
+    "truncated": false
   }
-]
+}

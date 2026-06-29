@@ -1,9 +1,14 @@
 {
-  "unit": "nginx",
-  "loadState": "loaded",
-  "activeState": "active",
-  "subState": "running",
-  "unitFileState": "enabled",
-  "description": "nginx web server",
-  "mainPID": 123
+  "apiVersion": "srvgov.io/v1",
+  "kind": "ServiceStatus",
+  "success": true,
+  "data": {
+    "unit": "nginx",
+    "loadState": "loaded",
+    "activeState": "active",
+    "subState": "running",
+    "unitFileState": "enabled",
+    "description": "nginx web server",
+    "mainPID": 123
+  }
 }

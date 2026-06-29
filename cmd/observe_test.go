@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -69,10 +68,7 @@ func TestStatusRunsIndependentGovernedProbesAndRedacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status error = %v", err)
 	}
-	var got observe.Status
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(status) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[observe.Status](t, output, "ServerStatus")
 	if got.Hostname != "web-01" || got.Mem.Total != 1024000 || strings.Contains(output, "cpu-secret") {
 		t.Fatalf("status = %#v; output = %s", got, output)
 	}
@@ -116,10 +112,7 @@ func TestStatusDegradesWhenOptionalProbeIsMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status error = %v", err)
 	}
-	var got observe.Status
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(status) error = %v", err)
-	}
+	got := decodeJSONData[observe.Status](t, output, "ServerStatus")
 	if got.Hostname != "web-01" || got.Kernel != "" || got.Load.One != 0 {
 		t.Fatalf("status = %#v", got)
 	}
@@ -143,10 +136,7 @@ func TestStatusSkipsAnyRemoteNonzeroProbe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status error = %v", err)
 	}
-	var got observe.Status
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(status) error = %v", err)
-	}
+	got := decodeJSONData[observe.Status](t, output, "ServerStatus")
 	if got.Hostname != "web-01" || got.Kernel == "" || got.Uptime != 0 || len(got.Disk) != 0 {
 		t.Fatalf("status = %#v", got)
 	}
@@ -200,10 +190,7 @@ func TestPortsFallsBackToNetstatAndLeavesPrivilegedFieldsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ports error = %v", err)
 	}
-	var got []observe.Port
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(ports) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONList[observe.Port](t, output, "Ports").Items
 	if len(got) != 1 || got[0].LocalPort != 53 || got[0].PID != 0 || got[0].Process != "" {
 		t.Fatalf("ports = %#v", got)
 	}
@@ -240,10 +227,7 @@ func TestPortsFallsBackWhenSSOutputCannotBeParsed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ports error = %v", err)
 	}
-	var got []observe.Port
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(ports) error = %v", err)
-	}
+	got := decodeJSONList[observe.Port](t, output, "Ports").Items
 	if len(got) != 1 || got[0].LocalPort != 22 {
 		t.Fatalf("ports = %#v", got)
 	}
@@ -303,10 +287,7 @@ func TestLogsQuotesInjectionAndRedactsStructuredOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logs error = %v", err)
 	}
-	var got logsView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(logs) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[logsView](t, output, "Logs")
 	if runner.commands[0] != command || cmdclass.Classify(command) != safety.R0 {
 		t.Fatalf("command = %q", runner.commands[0])
 	}
@@ -338,10 +319,7 @@ func TestFileLogsFilterLocallyWithoutShellPipeline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logs error = %v", err)
 	}
-	var got logsView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(logs) error = %v", err)
-	}
+	got := decodeJSONData[logsView](t, output, "Logs")
 	if strings.Contains(command, "|") || cmdclass.Classify(command) != safety.R0 {
 		t.Fatalf("file command = %q", command)
 	}
@@ -396,10 +374,7 @@ func TestLogsFallsBackFromJournalctlToSystemctl(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logs error = %v", err)
 	}
-	var got logsView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(logs) error = %v", err)
-	}
+	got := decodeJSONData[logsView](t, output, "Logs")
 	if got.Meta.Backend != "systemctl" || len(got.Lines) != 1 {
 		t.Fatalf("logs = %#v", got)
 	}

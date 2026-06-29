@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -92,10 +91,7 @@ func TestFileReadTruncatesAndRedacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("file read error = %v", err)
 	}
-	var got fileReadView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(read) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[fileReadView](t, output, "FileRead")
 	if !got.Truncated || got.Bytes != 32 || strings.Contains(output, "content-secret") || strings.Contains(output, "path-secret") {
 		t.Fatalf("read = %#v; output = %s", got, output)
 	}
@@ -123,10 +119,7 @@ func TestFileStatAndListStructuredOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("file stat error = %v", err)
 	}
-	var stat fileStatView
-	if err := json.Unmarshal([]byte(statOutput), &stat); err != nil {
-		t.Fatalf("Unmarshal(stat) error = %v", err)
-	}
+	stat := decodeJSONData[fileStatView](t, statOutput, "FileStat")
 	if stat.Type != "regular file" || stat.Size != 12 || stat.Mode != "640" || stat.Owner != "alice" {
 		t.Fatalf("stat = %#v", stat)
 	}
@@ -135,10 +128,7 @@ func TestFileStatAndListStructuredOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("file list error = %v", err)
 	}
-	var list []fileListItem
-	if err := json.Unmarshal([]byte(listOutput), &list); err != nil {
-		t.Fatalf("Unmarshal(list) error = %v; output = %q", err, listOutput)
-	}
+	list := decodeJSONList[fileListItem](t, listOutput, "FileList").Items
 	if len(list) != 2 || list[0].Name != "a file" || list[0].Type != "file" || list[1].Type != "directory" {
 		t.Fatalf("list = %#v", list)
 	}
@@ -179,10 +169,7 @@ func TestFileWriteContentFlagDoesNotReadCommandStdin(t *testing.T) {
 	if stdin.reads != 0 || runner.input != "password=write-secret" || runner.command != fileWriteCommand("/tmp/app") {
 		t.Fatalf("stdin reads = %d; runner = %#v", stdin.reads, runner)
 	}
-	var got fileWriteView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(write) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[fileWriteView](t, output, "FileWrite")
 	if !got.Success || got.BytesWritten != int64(len("password=write-secret")) || strings.Contains(output, "write-secret") {
 		t.Fatalf("write = %#v; output = %s", got, output)
 	}
@@ -353,10 +340,7 @@ func TestFileWriteRemoteNonzeroReturnsStructuredBackendError(t *testing.T) {
 		"file", "write", "/tmp/app", "--content", content, "--reason", "update app file",
 	)
 	assertAppError(t, err, apperrors.CodeBackendError, 7)
-	var got fileWriteView
-	if jsonErr := json.Unmarshal([]byte(output), &got); jsonErr != nil {
-		t.Fatalf("Unmarshal(write) error = %v; output = %q", jsonErr, output)
-	}
+	got := decodeJSONData[fileWriteView](t, output, "FileWrite")
 	if got.Success || got.BytesWritten != int64(len(content)) {
 		t.Fatalf("write = %#v", got)
 	}

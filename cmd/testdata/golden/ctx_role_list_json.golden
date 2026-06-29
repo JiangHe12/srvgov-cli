@@ -1,1 +1,12 @@
-[]
+{
+  "apiVersion": "srvgov.io/v1",
+  "kind": "RoleList",
+  "success": true,
+  "data": {
+    "items": [],
+    "total": 0,
+    "page": 1,
+    "pageSize": 0,
+    "truncated": false
+  }
+}

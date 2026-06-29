@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -33,10 +32,7 @@ func TestSvcStatusUsesGovernedR0CommandAndRedacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("svc status error = %v", err)
 	}
-	var got serviceStatusView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(status) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[serviceStatusView](t, output, "ServiceStatus")
 	if len(runner.commands) != 1 || runner.commands[0] != command {
 		t.Fatalf("commands = %#v, want %q", runner.commands, command)
 	}
@@ -77,10 +73,7 @@ func TestSvcActionsUseFixedR2Commands(t *testing.T) {
 			if err != nil {
 				t.Fatalf("svc %s error = %v", action, err)
 			}
-			var got serviceActionView
-			if err := json.Unmarshal([]byte(output), &got); err != nil {
-				t.Fatalf("Unmarshal(action) error = %v; output = %q", err, output)
-			}
+			got := decodeJSONData[serviceActionView](t, output, "ServiceAction")
 			if cmdclass.Classify(command) != safety.R2 || got.Action != action || !got.Success || got.ExitCode != 0 {
 				t.Fatalf("command = %q; action = %#v", command, got)
 			}
@@ -197,10 +190,7 @@ func TestSvcRemoteNonzeroReturnsStructuredBackendError(t *testing.T) {
 		"svc", "--reason", "restart service", "restart", "nginx",
 	)
 	assertAppError(t, err, apperrors.CodeBackendError, 7)
-	var got serviceActionView
-	if jsonErr := json.Unmarshal([]byte(output), &got); jsonErr != nil {
-		t.Fatalf("Unmarshal(action) error = %v; output = %q", jsonErr, output)
-	}
+	got := decodeJSONData[serviceActionView](t, output, "ServiceAction")
 	if got.Success || got.ExitCode != 5 || strings.Contains(output, "remote-secret") {
 		t.Fatalf("action = %#v; output = %s", got, output)
 	}

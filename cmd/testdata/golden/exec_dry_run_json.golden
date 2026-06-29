@@ -1,9 +1,14 @@
 {
-  "context": "dev",
-  "host": "example.com:22",
-  "command": "pwd",
-  "riskTier": "R0",
-  "effectiveRiskTier": "R0",
-  "requiredAuthorization": [],
-  "dryRun": true
+  "apiVersion": "srvgov.io/v1",
+  "kind": "ExecDryRun",
+  "success": true,
+  "data": {
+    "context": "dev",
+    "host": "example.com:22",
+    "command": "pwd",
+    "riskTier": "R0",
+    "effectiveRiskTier": "R0",
+    "requiredAuthorization": [],
+    "dryRun": true
+  }
 }

@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,10 +21,7 @@ func TestContextCommandsLifecycleAndRedaction(t *testing.T) {
 	runCommand(t, configPath, "ctx", "use", "dev")
 
 	current := runCommand(t, configPath, "-o", "json", "ctx", "current")
-	var view contextView
-	if err := json.Unmarshal([]byte(current), &view); err != nil {
-		t.Fatalf("current JSON error = %v; output = %q", err, current)
-	}
+	view := decodeJSONData[contextView](t, current, "ContextItem")
 	if view.Name != "dev" || view.Host != "example.com" || view.Port != 2222 || view.Username != "alice" {
 		t.Fatalf("current view = %#v", view)
 	}
@@ -57,10 +53,7 @@ func TestContextLabelsDisplayAndPortableRoundTrip(t *testing.T) {
 	runCommand(t, configPath, "ctx", "use", "prod")
 
 	current := runCommand(t, configPath, "-o", "json", "ctx", "current")
-	var view contextView
-	if err := json.Unmarshal([]byte(current), &view); err != nil {
-		t.Fatalf("current JSON error = %v; output = %q", err, current)
-	}
+	view := decodeJSONData[contextView](t, current, "ContextItem")
 	if view.Labels["env"] != "prod" || view.Labels["role"] != "web" {
 		t.Fatalf("labels = %#v", view.Labels)
 	}
@@ -81,10 +74,7 @@ func TestContextLabelsDisplayAndPortableRoundTrip(t *testing.T) {
 	runCommand(t, importConfig, "ctx", "import", "-f", importFile, "--rename", "prod-copy", "--yes")
 	runCommand(t, importConfig, "ctx", "use", "prod-copy")
 	imported := runCommand(t, importConfig, "-o", "json", "ctx", "current")
-	var importedView contextView
-	if err := json.Unmarshal([]byte(imported), &importedView); err != nil {
-		t.Fatalf("imported current JSON error = %v; output = %q", err, imported)
-	}
+	importedView := decodeJSONData[contextView](t, imported, "ContextItem")
 	if importedView.Labels["env"] != "prod" || importedView.Labels["role"] != "web" {
 		t.Fatalf("imported labels = %#v", importedView.Labels)
 	}

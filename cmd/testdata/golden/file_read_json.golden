@@ -1,6 +1,11 @@
 {
-  "path": "/tmp/app.txt",
-  "content": "hello\n",
-  "bytes": 6,
-  "truncated": false
+  "apiVersion": "srvgov.io/v1",
+  "kind": "FileRead",
+  "success": true,
+  "data": {
+    "path": "/tmp/app.txt",
+    "content": "hello\n",
+    "bytes": 6,
+    "truncated": false
+  }
 }

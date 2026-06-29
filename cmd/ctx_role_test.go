@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"testing"
 
 	"github.com/JiangHe12/opskit-core/apperrors"
@@ -15,10 +14,7 @@ func TestContextRoleLifecycleAndAudit(t *testing.T) {
 
 	runCommand(t, configPath, "ctx", "role", "set", "dev", "--target-operator", "alice", "--role", "writer")
 	output := runCommand(t, configPath, "-o", "json", "ctx", "role", "list", "dev")
-	var roles []roleItem
-	if err := json.Unmarshal([]byte(output), &roles); err != nil {
-		t.Fatalf("Unmarshal() error = %v; output = %q", err, output)
-	}
+	roles := decodeJSONList[roleItem](t, output, "RoleList").Items
 	if len(roles) != 1 || roles[0].Operator != "alice" || roles[0].Role != "writer" {
 		t.Fatalf("roles = %#v", roles)
 	}

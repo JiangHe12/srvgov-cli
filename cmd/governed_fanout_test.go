@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"io"
 	"os"
 	"strings"
@@ -147,10 +146,7 @@ func TestGovernedReadFanoutAuditsEachTargetWithOwnEventType(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s fanout error = %v", tt.name, err)
 			}
-			var view fanoutView
-			if err := json.Unmarshal([]byte(output), &view); err != nil {
-				t.Fatalf("Unmarshal() error = %v; output=%q", err, output)
-			}
+			view := decodeJSONData[fanoutView](t, output, "FanoutResult")
 			if view.Summary.Succeeded != 2 || view.MaxEffectiveRiskTier != "" {
 				t.Fatalf("view = %#v", view)
 			}
@@ -239,10 +235,7 @@ func TestGovernedFanoutDryRunDoesNotConnectOrAudit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("dry-run error = %v", err)
 			}
-			var view fanoutView
-			if err := json.Unmarshal([]byte(output), &view); err != nil {
-				t.Fatalf("Unmarshal() error = %v; output=%q", err, output)
-			}
+			view := decodeJSONData[fanoutView](t, output, "FanoutResult")
 			if view.MaxEffectiveRiskTier != "R3" || len(runner.commands) != 0 || stdin.reads != 0 {
 				t.Fatalf("view=%#v commands=%#v stdinReads=%d", view, runner.commands, stdin.reads)
 			}
@@ -271,10 +264,7 @@ func TestGovernedSingleTargetDryRunDoesNotConnectOrAudit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("dry-run error = %v", err)
 			}
-			var view execDryRunView
-			if err := json.Unmarshal([]byte(output), &view); err != nil {
-				t.Fatalf("Unmarshal() error = %v; output=%q", err, output)
-			}
+			view := decodeJSONData[execDryRunView](t, output, "ExecDryRun")
 			if !view.DryRun || view.EffectiveRiskTier != "R2" ||
 				len(runner.commands) != 0 || stdin.reads != 0 {
 				t.Fatalf("view=%#v commands=%#v stdinReads=%d", view, runner.commands, stdin.reads)

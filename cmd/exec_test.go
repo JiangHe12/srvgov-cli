@@ -43,10 +43,7 @@ func TestExecDryRunClassifiesWithoutConnecting(t *testing.T) {
 	if runner.calls != 0 {
 		t.Fatalf("runner calls = %d, want 0", runner.calls)
 	}
-	var got execDryRunView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("dry-run JSON error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[execDryRunView](t, output, "ExecDryRun")
 	if !got.DryRun || got.RiskTier != "R2" || got.EffectiveRiskTier != "R2" {
 		t.Fatalf("dry-run view = %#v", got)
 	}
@@ -220,10 +217,7 @@ func TestExecRemoteNonzeroReturnsBackendErrorAfterResult(t *testing.T) {
 
 	output, err := executeRoot(t, configPath, "-o", "json", "exec", "pwd")
 	assertAppError(t, err, apperrors.CodeBackendError, 7)
-	var got execResultView
-	if jsonErr := json.Unmarshal([]byte(output), &got); jsonErr != nil {
-		t.Fatalf("result JSON error = %v; output = %q", jsonErr, output)
-	}
+	got := decodeJSONData[execResultView](t, output, "ExecResult")
 	if got.ExitCode != 23 || got.Stdout != "partial output" || got.Stderr != "command failed" {
 		t.Fatalf("result = %#v", got)
 	}

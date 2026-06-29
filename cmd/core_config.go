@@ -26,7 +26,7 @@ func init() {
 	})
 	corectx.Configure(corectx.Options{APIVersion: "srvgov.io/context/v1", ConfigDirName: ".srvgov"})
 	lockfile.Configure(lockfile.Options{TimeoutEnvVar: "SRVGOV_LOCK_TIMEOUT"})
-	printer.Configure(printer.Options{APIVersion: "srvgov.io/v1"})
+	printer.Configure(printer.Options{APIVersion: "srvgov.io/v1", JSONEnvelopeByDefault: true})
 	safety.Configure(safety.Config{
 		Prompt:                   "Proceed with remote server operation? [y/N] ",
 		OperatorEnvVar:           "SRVGOV_OPERATOR",

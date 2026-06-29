@@ -8,14 +8,16 @@ import (
 
 var (
 	version = "dev"
-	commit  = ""
-	date    = ""
+	commit  = unknownBuildValue
+	date    = unknownBuildValue
 )
 
+const unknownBuildValue = "unknown"
+
 type versionInfo struct {
+	Built   string `json:"built"`
+	Commit  string `json:"commit"`
 	Version string `json:"version"`
-	Commit  string `json:"commit,omitempty"`
-	Date    string `json:"date,omitempty"`
 }
 
 // SetVersionInfo supplies build metadata from main.
@@ -23,8 +25,15 @@ func SetVersionInfo(nextVersion, nextCommit, nextDate string) {
 	if nextVersion != "" {
 		version = nextVersion
 	}
-	commit = nextCommit
-	date = nextDate
+	commit = buildMetadataValue(nextCommit)
+	date = buildMetadataValue(nextDate)
+}
+
+func buildMetadataValue(value string) string {
+	if value == "" {
+		return unknownBuildValue
+	}
+	return value
 }
 
 func newVersionCmd(f *cliFlags) *cobra.Command {
@@ -33,7 +42,7 @@ func newVersionCmd(f *cliFlags) *cobra.Command {
 		Short: "Show version information",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			info := versionInfo{Version: version, Commit: commit, Date: date}
+			info := versionInfo{Built: date, Commit: commit, Version: version}
 			p := newPrinter(f)
 			if f.Output == "json" {
 				return p.JSONData("VersionInfo", info)
@@ -42,14 +51,7 @@ func newVersionCmd(f *cliFlags) *cobra.Command {
 				_, _ = fmt.Fprintln(p.Out, info.Version)
 				return nil
 			}
-			rows := [][2]string{{"version", info.Version}}
-			if info.Commit != "" {
-				rows = append(rows, [2]string{"commit", info.Commit})
-			}
-			if info.Date != "" {
-				rows = append(rows, [2]string{"date", info.Date})
-			}
-			p.KV(rows)
+			_, _ = fmt.Fprintf(p.Out, "srvgov-cli %s (commit: %s, built: %s)\n", info.Version, info.Commit, info.Built)
 			return nil
 		},
 	}

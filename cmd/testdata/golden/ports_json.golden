@@ -1,8 +1,19 @@
-[
-  {
-    "proto": "tcp",
-    "localAddr": "127.0.0.1",
-    "localPort": 8080,
-    "state": "LISTEN"
+{
+  "apiVersion": "srvgov.io/v1",
+  "kind": "Ports",
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "proto": "tcp",
+        "localAddr": "127.0.0.1",
+        "localPort": 8080,
+        "state": "LISTEN"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 1,
+    "truncated": false
   }
-]
+}

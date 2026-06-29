@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -53,10 +52,7 @@ func TestDockerListParsesStructuredRedactedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("docker ps error = %v", err)
 	}
-	var got []dockerListItem
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(list) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONList[dockerListItem](t, output, "DockerList").Items
 	if len(got) != 1 || got[0].ID != "abc" || got[0].Name != "api" || strings.Contains(output, "list-secret") {
 		t.Fatalf("list = %#v; output = %s", got, output)
 	}
@@ -92,10 +88,7 @@ func TestDockerInspectProjectsSafeFieldsAndExcludesEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("docker inspect error = %v", err)
 	}
-	var got dockerInspectView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(inspect) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[dockerInspectView](t, output, "DockerInspect")
 	if got.ID != "abc" || got.Name != "api" || len(got.Ports) != 1 || len(got.Mounts) != 1 {
 		t.Fatalf("inspect = %#v", got)
 	}
@@ -120,10 +113,7 @@ func TestDockerLogsLimitsAndRedactsStdoutAndStderr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("docker logs error = %v", err)
 	}
-	var got dockerLogsView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(logs) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[dockerLogsView](t, output, "DockerLogs")
 	if got.Meta.Backend != "docker" || got.Meta.Container != "api" ||
 		got.Meta.RequestedLines != 2 || got.Meta.ReturnedLines != 3 ||
 		len(got.Lines) != 3 ||
@@ -158,10 +148,7 @@ func TestDockerActionsUseR2AndHumanAuthorization(t *testing.T) {
 			if err != nil {
 				t.Fatalf("docker %s error = %v", action, err)
 			}
-			var got dockerActionView
-			if err := json.Unmarshal([]byte(output), &got); err != nil {
-				t.Fatalf("Unmarshal(action) error = %v; output = %q", err, output)
-			}
+			got := decodeJSONData[dockerActionView](t, output, "DockerAction")
 			if cmdclass.Classify(command) != safety.R2 || got.Container != "run" || !got.Success {
 				t.Fatalf("command = %q; action = %#v", command, got)
 			}
@@ -265,10 +252,7 @@ func TestDockerActionRemoteNonzeroReturnsStructuredBackendError(t *testing.T) {
 		"docker", "restart", "api", "--reason", "restart container",
 	)
 	assertAppError(t, err, apperrors.CodeBackendError, 7)
-	var got dockerActionView
-	if jsonErr := json.Unmarshal([]byte(output), &got); jsonErr != nil {
-		t.Fatalf("Unmarshal(action) error = %v; output = %q", jsonErr, output)
-	}
+	got := decodeJSONData[dockerActionView](t, output, "DockerAction")
 	if got.Success || got.ExitCode != 5 || strings.Contains(output, "remote-secret") {
 		t.Fatalf("action = %#v; output = %s", got, output)
 	}

@@ -94,10 +94,7 @@ func TestAuditQueryFiltersEventType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit query error = %v", err)
 	}
-	var got auditQueryResult
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal() error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[auditQueryResult](t, output, "AuditQueryResult")
 	if len(got.Events) != 1 || got.Events[0].EventType != srvgovaudit.EventTypeAuthorizationDenied {
 		t.Fatalf("events = %#v", got.Events)
 	}
@@ -144,10 +141,7 @@ func TestAuditQueryReverseAndLimitAreAppliedAfterDecode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit query error = %v", err)
 	}
-	var got auditQueryResult
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal() error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[auditQueryResult](t, output, "AuditQueryResult")
 	if len(got.Events) != 1 || got.Events[0].EventType != srvgovaudit.EventTypeAuditVerify {
 		t.Fatalf("events = %#v", got.Events)
 	}
@@ -163,10 +157,7 @@ func TestAuditVerifyStrictReturnsValidationFailed(t *testing.T) {
 		"-o", "json", "audit", "verify", "--path", path, "--strict",
 	)
 	assertAppError(t, err, apperrors.CodeValidationFailed, 9)
-	var got coreaudit.VerifyResult
-	if jsonErr := json.Unmarshal([]byte(output), &got); jsonErr != nil {
-		t.Fatalf("Unmarshal() error = %v; output = %q", jsonErr, output)
-	}
+	got := decodeJSONData[coreaudit.VerifyResult](t, output, "AuditVerifyResult")
 	if got.Malformed != 1 {
 		t.Fatalf("verify result = %#v", got)
 	}
@@ -189,10 +180,7 @@ func TestAuditPruneDeletesRotatedLogsOnlyWithConfirm(t *testing.T) {
 	if err != nil {
 		t.Fatalf("audit prune dry-run error = %v", err)
 	}
-	var preview auditPruneResult
-	if err := json.Unmarshal([]byte(output), &preview); err != nil {
-		t.Fatalf("Unmarshal(preview) error = %v", err)
-	}
+	preview := decodeJSONData[auditPruneResult](t, output, "AuditPruneResult")
 	if !preview.DryRun || preview.Count != 1 || preview.Files[0] != oldRotated {
 		t.Fatalf("preview = %#v", preview)
 	}

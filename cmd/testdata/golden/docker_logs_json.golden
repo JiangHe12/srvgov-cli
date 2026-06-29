@@ -1,24 +1,29 @@
 {
-  "lines": [
-    {
-      "timestamp": "2026-06-12T08:15:30Z",
-      "hostname": "",
-      "unit": "",
-      "priority": "",
-      "message": "ready"
-    },
-    {
-      "timestamp": "2026-06-12T08:15:31.123456789Z",
-      "hostname": "",
-      "unit": "",
-      "priority": "",
-      "message": "serving"
+  "apiVersion": "srvgov.io/v1",
+  "kind": "DockerLogs",
+  "success": true,
+  "data": {
+    "lines": [
+      {
+        "timestamp": "2026-06-12T08:15:30Z",
+        "hostname": "",
+        "unit": "",
+        "priority": "",
+        "message": "ready"
+      },
+      {
+        "timestamp": "2026-06-12T08:15:31.123456789Z",
+        "hostname": "",
+        "unit": "",
+        "priority": "",
+        "message": "serving"
+      }
+    ],
+    "meta": {
+      "backend": "docker",
+      "container": "api",
+      "requestedLines": 100,
+      "returnedLines": 2
     }
-  ],
-  "meta": {
-    "backend": "docker",
-    "container": "api",
-    "requestedLines": 100,
-    "returnedLines": 2
   }
 }

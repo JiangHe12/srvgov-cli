@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -28,10 +27,7 @@ func TestInstallSkillsToCustomDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install error = %v", err)
 	}
-	var result map[string]string
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		t.Fatalf("Unmarshal() error = %v; output = %q", err, output)
-	}
+	result := decodeJSONData[map[string]string](t, output, "InstallResult")
 	if result["path"] != filepath.Join(target, "srvgov-cli") {
 		t.Fatalf("install path = %q", result["path"])
 	}

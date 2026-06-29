@@ -1,54 +1,59 @@
 {
-  "tool": {
-    "name": "srvgov",
-    "version": "dev"
-  },
-  "supported": {
-    "contextApiVersion": "srvgov.io/context/v1",
-    "auditApiVersion": "srvgov.io/audit/v1",
-    "riskModel": [
-      {
-        "level": "R0",
-        "authorization": "free"
-      },
-      {
-        "level": "R1",
-        "authorization": "--reason plus --yes or interactive confirmation"
-      },
-      {
-        "level": "R2",
-        "authorization": "--reason plus --yes plus --ticket"
-      },
-      {
-        "level": "R3",
-        "authorization": "--reason plus --yes plus --ticket plus --allow-destructive"
-      }
-    ],
-    "allowFlags": [
-      "--allow-destructive"
-    ],
-    "governance": {
-      "audit": "append-only JSONL with optional age encryption",
-      "rbac": "opt-in roles reader/writer/admin",
-      "dryRun": true,
-      "tofu": "strict SSH host-key fingerprint pinning",
-      "redaction": "command, stdout, stderr, and audit fields are redacted",
-      "fanout": "status, ports, and logs require R0 for every target; exec, svc, file, and docker authorize every target before any execution; --selector resolves targets by context labels"
+  "apiVersion": "srvgov.io/v1",
+  "kind": "Capabilities",
+  "success": true,
+  "data": {
+    "tool": {
+      "name": "srvgov",
+      "version": "dev"
     },
-    "commands": [
-      "ctx",
-      "exec",
-      "status",
-      "ports",
-      "logs",
-      "svc",
-      "file",
-      "docker",
-      "audit",
-      "doctor",
-      "version",
-      "capabilities",
-      "install"
-    ]
+    "supported": {
+      "contextApiVersion": "srvgov.io/context/v1",
+      "auditApiVersion": "srvgov.io/audit/v1",
+      "riskModel": [
+        {
+          "level": "R0",
+          "authorization": "free"
+        },
+        {
+          "level": "R1",
+          "authorization": "--reason plus --yes or interactive confirmation"
+        },
+        {
+          "level": "R2",
+          "authorization": "--reason plus --yes plus --ticket"
+        },
+        {
+          "level": "R3",
+          "authorization": "--reason plus --yes plus --ticket plus --allow-destructive"
+        }
+      ],
+      "allowFlags": [
+        "--allow-destructive"
+      ],
+      "governance": {
+        "audit": "append-only JSONL with optional age encryption",
+        "rbac": "opt-in roles reader/writer/admin",
+        "dryRun": true,
+        "tofu": "strict SSH host-key fingerprint pinning",
+        "redaction": "command, stdout, stderr, and audit fields are redacted",
+        "fanout": "status, ports, and logs require R0 for every target; exec, svc, file, and docker authorize every target before any execution; --selector resolves targets by context labels"
+      },
+      "commands": [
+        "ctx",
+        "exec",
+        "status",
+        "ports",
+        "logs",
+        "svc",
+        "file",
+        "docker",
+        "audit",
+        "doctor",
+        "version",
+        "capabilities",
+        "install"
+      ]
+    }
   }
 }

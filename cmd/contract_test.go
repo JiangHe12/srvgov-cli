@@ -84,42 +84,45 @@ func TestJSONOutputContract(t *testing.T) {
 	restoreStdin := replaceSSHStdinRunner(stdinRunner)
 	t.Cleanup(restoreStdin)
 	cases := []struct {
-		name      string
-		args      []string
-		wantArray bool
+		name     string
+		args     []string
+		wantKind string
+		wantList bool
 	}{
-		{name: "exec dry-run object", args: []string{"-o", "json", "exec", "--dry-run", "pwd"}},
-		{name: "status object", args: []string{"-o", "json", "status"}},
-		{name: "ports array", args: []string{"-o", "json", "ports"}, wantArray: true},
-		{name: "logs object", args: []string{"-o", "json", "logs", "--file", logOptions.File, "--lines", "2"}},
-		{name: "svc status object", args: []string{"-o", "json", "svc", "status", "nginx"}},
-		{name: "file read object", args: []string{"-o", "json", "file", "read", "/tmp/app"}},
-		{name: "file stat object", args: []string{"-o", "json", "file", "stat", "/tmp/app"}},
-		{name: "file list array", args: []string{"-o", "json", "file", "list", "/tmp/app"}, wantArray: true},
+		{name: "exec dry-run object", args: []string{"-o", "json", "exec", "--dry-run", "pwd"}, wantKind: "ExecDryRun"},
+		{name: "status object", args: []string{"-o", "json", "status"}, wantKind: "ServerStatus"},
+		{name: "ports list", args: []string{"-o", "json", "ports"}, wantKind: "Ports", wantList: true},
+		{name: "logs object", args: []string{"-o", "json", "logs", "--file", logOptions.File, "--lines", "2"}, wantKind: "Logs"},
+		{name: "svc status object", args: []string{"-o", "json", "svc", "status", "nginx"}, wantKind: "ServiceStatus"},
+		{name: "file read object", args: []string{"-o", "json", "file", "read", "/tmp/app"}, wantKind: "FileRead"},
+		{name: "file stat object", args: []string{"-o", "json", "file", "stat", "/tmp/app"}, wantKind: "FileStat"},
+		{name: "file list", args: []string{"-o", "json", "file", "list", "/tmp/app"}, wantKind: "FileList", wantList: true},
 		{
-			name: "file write object",
+			name:     "file write object",
+			wantKind: "FileWrite",
 			args: []string{
 				"-o", "json", "--non-interactive", "--yes", "--ticket", "OPS-42",
 				"file", "write", "/tmp/app", "--content", "hello", "--reason", "update test file",
 			},
 		},
-		{name: "docker list array", args: []string{"-o", "json", "docker", "list"}, wantArray: true},
-		{name: "docker inspect object", args: []string{"-o", "json", "docker", "inspect", "api"}},
-		{name: "docker logs object", args: []string{"-o", "json", "docker", "logs", "api"}},
+		{name: "docker list", args: []string{"-o", "json", "docker", "list"}, wantKind: "DockerList", wantList: true},
+		{name: "docker inspect object", args: []string{"-o", "json", "docker", "inspect", "api"}, wantKind: "DockerInspect"},
+		{name: "docker logs object", args: []string{"-o", "json", "docker", "logs", "api"}, wantKind: "DockerLogs"},
 		{
-			name: "docker action object",
+			name:     "docker action object",
+			wantKind: "DockerAction",
 			args: []string{
 				"-o", "json", "--non-interactive", "--yes", "--ticket", "OPS-42",
 				"docker", "restart", "api", "--reason", "restart test container",
 			},
 		},
-		{name: "capabilities object", args: []string{"-o", "json", "capabilities"}},
-		{name: "ctx list array", args: []string{"-o", "json", "ctx", "list"}, wantArray: true},
-		{name: "ctx role list array", args: []string{"-o", "json", "ctx", "role", "list", "dev"}, wantArray: true},
-		{name: "audit query object", args: []string{"-o", "json", "audit", "query"}},
-		{name: "audit verify object", args: []string{"-o", "json", "audit", "verify", "--path", "testdata/missing-audit.log"}},
-		{name: "audit prune object", args: []string{"-o", "json", "audit", "prune", "--path", "testdata/missing-audit.log", "--keep-last", "1"}},
-		{name: "doctor object", args: []string{"-o", "json", "doctor"}},
+		{name: "capabilities object", args: []string{"-o", "json", "capabilities"}, wantKind: "Capabilities"},
+		{name: "ctx list", args: []string{"-o", "json", "ctx", "list"}, wantKind: "ContextList", wantList: true},
+		{name: "ctx role list", args: []string{"-o", "json", "ctx", "role", "list", "dev"}, wantKind: "RoleList", wantList: true},
+		{name: "audit query object", args: []string{"-o", "json", "audit", "query"}, wantKind: "AuditQueryResult"},
+		{name: "audit verify object", args: []string{"-o", "json", "audit", "verify", "--path", "testdata/missing-audit.log"}, wantKind: "AuditVerifyResult"},
+		{name: "audit prune object", args: []string{"-o", "json", "audit", "prune", "--path", "testdata/missing-audit.log", "--keep-last", "1"}, wantKind: "AuditPruneResult"},
+		{name: "doctor object", args: []string{"-o", "json", "doctor"}, wantKind: "DoctorReport"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -127,20 +130,17 @@ func TestJSONOutputContract(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Execute() error = %v", err)
 			}
-			if !json.Valid([]byte(output)) {
-				t.Fatalf("invalid JSON: %q", output)
-			}
-			var value any
-			if err := json.Unmarshal([]byte(output), &value); err != nil {
-				t.Fatalf("Unmarshal() error = %v", err)
-			}
-			_, isArray := value.([]any)
-			_, isObject := value.(map[string]any)
-			if tc.wantArray && !isArray {
-				t.Fatalf("top-level JSON = %T, want array", value)
-			}
-			if !tc.wantArray && !isObject {
-				t.Fatalf("top-level JSON = %T, want object", value)
+			raw := decodeJSONRawData(t, output, tc.wantKind)
+			if tc.wantList {
+				var list struct {
+					Items []json.RawMessage `json:"items"`
+				}
+				if err := json.Unmarshal(raw, &list); err != nil {
+					t.Fatalf("Unmarshal(list data) error = %v; output = %q", err, output)
+				}
+				if list.Items == nil {
+					t.Fatalf("data.items = nil, want list envelope items; output = %q", output)
+				}
 			}
 		})
 	}
@@ -152,7 +152,8 @@ func TestVersionDefaultsRemainLocal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version error = %v", err)
 	}
-	if !json.Valid([]byte(output)) {
-		t.Fatalf("invalid JSON: %q", output)
+	got := decodeJSONData[versionInfo](t, output, "VersionInfo")
+	if got.Version != "dev" || got.Commit != unknownBuildValue || got.Built != unknownBuildValue {
+		t.Fatalf("version defaults = %#v", got)
 	}
 }

@@ -1,25 +1,30 @@
 {
-  "id": "abc",
-  "name": "api",
-  "image": "repo:tag",
-  "state": "running",
-  "status": "running",
-  "restartPolicy": "unless-stopped",
-  "ports": [
-    {
-      "containerPort": "80/tcp",
-      "hostIP": "0.0.0.0",
-      "hostPort": "8080"
-    }
-  ],
-  "mounts": [
-    {
-      "type": "bind",
-      "source": "/srv/api",
-      "destination": "/app",
-      "mode": "ro",
-      "rw": false
-    }
-  ],
-  "createdAt": "2026-06-11T10:00:00Z"
+  "apiVersion": "srvgov.io/v1",
+  "kind": "DockerInspect",
+  "success": true,
+  "data": {
+    "id": "abc",
+    "name": "api",
+    "image": "repo:tag",
+    "state": "running",
+    "status": "running",
+    "restartPolicy": "unless-stopped",
+    "ports": [
+      {
+        "containerPort": "80/tcp",
+        "hostIP": "0.0.0.0",
+        "hostPort": "8080"
+      }
+    ],
+    "mounts": [
+      {
+        "type": "bind",
+        "source": "/srv/api",
+        "destination": "/app",
+        "mode": "ro",
+        "rw": false
+      }
+    ],
+    "createdAt": "2026-06-11T10:00:00Z"
+  }
 }

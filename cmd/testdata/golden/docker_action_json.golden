@@ -1,6 +1,11 @@
 {
-  "container": "api",
-  "action": "restart",
+  "apiVersion": "srvgov.io/v1",
+  "kind": "DockerAction",
   "success": true,
-  "exitCode": 0
+  "data": {
+    "container": "api",
+    "action": "restart",
+    "success": true,
+    "exitCode": 0
+  }
 }

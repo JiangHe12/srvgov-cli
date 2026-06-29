@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -179,10 +178,7 @@ func TestExecFanoutSelectorSelectsSortedTargetsAndDryRunShowsBlastRadius(t *test
 	if err != nil {
 		t.Fatalf("exec selector dry-run error = %v", err)
 	}
-	var got fanoutView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(fanout) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[fanoutView](t, output, "FanoutResult")
 	if strings.Join(got.Targets, ",") != "alpha,bravo" || got.MaxEffectiveRiskTier != "R2" {
 		t.Fatalf("fanout = %#v", got)
 	}
@@ -391,10 +387,7 @@ func TestExecFanoutExecutesAllAuthorizedR2TargetsAndAuditsOwnRisk(t *testing.T) 
 	if len(runner.commands) != 2 {
 		t.Fatalf("commands = %#v, want both targets", runner.commands)
 	}
-	var got map[string]any
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(fanout) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[map[string]any](t, output, "FanoutResult")
 	if _, ok := got["maxEffectiveRiskTier"]; ok {
 		t.Fatalf("execution output added dry-run field: %s", output)
 	}
@@ -425,10 +418,7 @@ func TestExecFanoutDryRunShowsPerTargetAndMaximumEffectiveRiskWithoutAuthorizati
 	if err != nil {
 		t.Fatalf("exec dry-run error = %v", err)
 	}
-	var got fanoutView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(fanout) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[fanoutView](t, output, "FanoutResult")
 	if got.MaxEffectiveRiskTier != "R3" {
 		t.Fatalf("max effective risk = %q, want R3", got.MaxEffectiveRiskTier)
 	}
@@ -469,56 +459,58 @@ func TestExecFanoutSortsDeduplicatesRedactsAndAuditsEachTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exec fanout error = %v", err)
 	}
-	const v1Output = `{
-  "targets": [
-    "alpha",
-    "bravo"
-  ],
-  "concurrency": 2,
-  "summary": {
-    "total": 2,
-    "succeeded": 2,
-    "failed": 0
-  },
-  "results": [
-    {
-      "target": "alpha",
-      "host": "alpha.example:22",
-      "ok": true,
-      "data": {
-        "context": "alpha",
-        "host": "alpha.example:22",
-        "command": "pwd",
-        "riskTier": "R0",
-        "stdout": "password=[REDACTED]\n",
-        "stderr": "",
-        "exitCode": 0
-      }
+	const v2Output = `{
+  "apiVersion": "srvgov.io/v1",
+  "kind": "FanoutResult",
+  "success": true,
+  "data": {
+    "targets": [
+      "alpha",
+      "bravo"
+    ],
+    "concurrency": 2,
+    "summary": {
+      "total": 2,
+      "succeeded": 2,
+      "failed": 0
     },
-    {
-      "target": "bravo",
-      "host": "bravo.example:22",
-      "ok": true,
-      "data": {
-        "context": "bravo",
+    "results": [
+      {
+        "target": "alpha",
+        "host": "alpha.example:22",
+        "ok": true,
+        "data": {
+          "context": "alpha",
+          "host": "alpha.example:22",
+          "command": "pwd",
+          "riskTier": "R0",
+          "stdout": "password=[REDACTED]\n",
+          "stderr": "",
+          "exitCode": 0
+        }
+      },
+      {
+        "target": "bravo",
         "host": "bravo.example:22",
-        "command": "pwd",
-        "riskTier": "R0",
-        "stdout": "/srv/bravo\n",
-        "stderr": "",
-        "exitCode": 0
+        "ok": true,
+        "data": {
+          "context": "bravo",
+          "host": "bravo.example:22",
+          "command": "pwd",
+          "riskTier": "R0",
+          "stdout": "/srv/bravo\n",
+          "stderr": "",
+          "exitCode": 0
+        }
       }
-    }
-  ]
+    ]
+  }
 }
 `
-	if output != v1Output {
-		t.Fatalf("execution JSON changed from v1\nactual:\n%s\nwant:\n%s", output, v1Output)
+	if output != v2Output {
+		t.Fatalf("execution JSON changed from v2\nactual:\n%s\nwant:\n%s", output, v2Output)
 	}
-	var got fanoutView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(fanout) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[fanoutView](t, output, "FanoutResult")
 	if strings.Join(got.Targets, ",") != "alpha,bravo" || got.Concurrency != 2 {
 		t.Fatalf("fanout = %#v", got)
 	}
@@ -554,10 +546,7 @@ func TestExecFanoutContinuesAfterFailureAndReturnsBackendError(t *testing.T) {
 		"systemctl restart nginx",
 	)
 	assertAppError(t, err, apperrors.CodeBackendError, 7)
-	var got fanoutView
-	if jsonErr := json.Unmarshal([]byte(output), &got); jsonErr != nil {
-		t.Fatalf("Unmarshal(fanout) error = %v; output = %q", jsonErr, output)
-	}
+	got := decodeJSONData[fanoutView](t, output, "FanoutResult")
 	if got.Summary.Succeeded != 1 || got.Summary.Failed != 1 || got.Results[1].Error == nil {
 		t.Fatalf("fanout = %#v", got)
 	}
@@ -589,10 +578,7 @@ func TestStatusAndPortsFanoutUseIndependentR0Probes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status fanout error = %v", err)
 	}
-	var statusFanout fanoutView
-	if err := json.Unmarshal([]byte(output), &statusFanout); err != nil {
-		t.Fatalf("Unmarshal(status fanout) error = %v; output = %q", err, output)
-	}
+	statusFanout := decodeJSONData[fanoutView](t, output, "FanoutResult")
 	if len(statusFanout.Results) != 2 || statusFanout.Results[0].Target != "alpha" || statusFanout.Results[1].Target != "bravo" {
 		t.Fatalf("status results = %#v", statusFanout.Results)
 	}
@@ -609,10 +595,7 @@ func TestStatusAndPortsFanoutUseIndependentR0Probes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ports fanout error = %v", err)
 	}
-	var portsFanout fanoutView
-	if err := json.Unmarshal([]byte(output), &portsFanout); err != nil {
-		t.Fatalf("Unmarshal(ports fanout) error = %v; output = %q", err, output)
-	}
+	portsFanout := decodeJSONData[fanoutView](t, output, "FanoutResult")
 	if portsFanout.Summary.Succeeded != 2 || len(portsFanout.Results) != 2 {
 		t.Fatalf("ports fanout = %#v", portsFanout)
 	}
@@ -652,10 +635,7 @@ func TestLogsFanoutSelectorUsesReadOnlyCapAndAuditsEachTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("logs fanout error = %v", err)
 	}
-	var got fanoutView
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal(logs fanout) error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[fanoutView](t, output, "FanoutResult")
 	if strings.Join(got.Targets, ",") != "alpha,bravo" || got.Summary.Succeeded != 2 || got.Summary.Failed != 0 {
 		t.Fatalf("fanout = %#v", got)
 	}
@@ -696,10 +676,7 @@ func TestLogsFanoutContinuesAfterTargetFailure(t *testing.T) {
 
 	output, err := executeRoot(t, configPath, "-o", "json", "logs", "--targets", "alpha,bravo", "--file", opts.File, "--lines", "1")
 	assertAppError(t, err, apperrors.CodeBackendError, 7)
-	var got fanoutView
-	if jsonErr := json.Unmarshal([]byte(output), &got); jsonErr != nil {
-		t.Fatalf("Unmarshal(logs fanout) error = %v; output = %q", jsonErr, output)
-	}
+	got := decodeJSONData[fanoutView](t, output, "FanoutResult")
 	if got.Summary.Succeeded != 1 || got.Summary.Failed != 1 || got.Results[1].Error == nil {
 		t.Fatalf("fanout = %#v", got)
 	}

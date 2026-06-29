@@ -1,16 +1,27 @@
-[
-  {
-    "name": "app.txt",
-    "type": "file",
-    "size": 6,
-    "mode": "640",
-    "mtime": "2024-03-09T16:00:00Z"
-  },
-  {
-    "name": "logs",
-    "type": "directory",
-    "size": 0,
-    "mode": "755",
-    "mtime": "2024-03-09T16:00:01Z"
+{
+  "apiVersion": "srvgov.io/v1",
+  "kind": "FileList",
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "name": "app.txt",
+        "type": "file",
+        "size": 6,
+        "mode": "640",
+        "mtime": "2024-03-09T16:00:00Z"
+      },
+      {
+        "name": "logs",
+        "type": "directory",
+        "size": 0,
+        "mode": "755",
+        "mtime": "2024-03-09T16:00:01Z"
+      }
+    ],
+    "total": 2,
+    "page": 1,
+    "pageSize": 2,
+    "truncated": false
   }
-]
+}

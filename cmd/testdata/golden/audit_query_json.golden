@@ -1,4 +1,9 @@
 {
-  "events": [],
-  "malformed": 0
+  "apiVersion": "srvgov.io/v1",
+  "kind": "AuditQueryResult",
+  "success": true,
+  "data": {
+    "events": [],
+    "malformed": 0
+  }
 }

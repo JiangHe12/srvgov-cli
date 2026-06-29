@@ -1,28 +1,33 @@
 {
-  "lines": [
-    {
-      "timestamp": "",
-      "hostname": "",
+  "apiVersion": "srvgov.io/v1",
+  "kind": "Logs",
+  "success": true,
+  "data": {
+    "lines": [
+      {
+        "timestamp": "",
+        "hostname": "",
+        "unit": "",
+        "priority": "",
+        "message": "first line"
+      },
+      {
+        "timestamp": "",
+        "hostname": "",
+        "unit": "",
+        "priority": "",
+        "message": "second line"
+      }
+    ],
+    "meta": {
+      "backend": "tail",
       "unit": "",
+      "file": "/var/log/app.log",
+      "since": "",
       "priority": "",
-      "message": "first line"
-    },
-    {
-      "timestamp": "",
-      "hostname": "",
-      "unit": "",
-      "priority": "",
-      "message": "second line"
+      "grep": "",
+      "requestedLines": 2,
+      "returnedLines": 2
     }
-  ],
-  "meta": {
-    "backend": "tail",
-    "unit": "",
-    "file": "/var/log/app.log",
-    "since": "",
-    "priority": "",
-    "grep": "",
-    "requestedLines": 2,
-    "returnedLines": 2
   }
 }

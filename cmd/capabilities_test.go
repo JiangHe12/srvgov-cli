@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,10 +11,7 @@ func TestCapabilitiesReflectSrvGovSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("capabilities error = %v", err)
 	}
-	var got CapabilitiesData
-	if err := json.Unmarshal([]byte(output), &got); err != nil {
-		t.Fatalf("Unmarshal() error = %v; output = %q", err, output)
-	}
+	got := decodeJSONData[CapabilitiesData](t, output, "Capabilities")
 	if got.Tool.Name != "srvgov" || got.Supported.ContextAPIVersion != "srvgov.io/context/v1" {
 		t.Fatalf("capabilities = %#v", got)
 	}

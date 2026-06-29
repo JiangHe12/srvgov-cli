@@ -1,5 +1,10 @@
 {
-  "dryRun": true,
-  "files": [],
-  "count": 0
+  "apiVersion": "srvgov.io/v1",
+  "kind": "AuditPruneResult",
+  "success": true,
+  "data": {
+    "dryRun": true,
+    "files": [],
+    "count": 0
+  }
 }

@@ -1,5 +1,10 @@
 {
-  "path": "/tmp/app.txt",
-  "bytesWritten": 6,
-  "success": true
+  "apiVersion": "srvgov.io/v1",
+  "kind": "FileWrite",
+  "success": true,
+  "data": {
+    "path": "/tmp/app.txt",
+    "bytesWritten": 6,
+    "success": true
+  }
 }
