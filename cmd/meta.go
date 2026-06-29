@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -68,12 +69,12 @@ type CapTool struct {
 }
 
 type CapSupported struct {
-	ContextAPIVersion string        `json:"contextApiVersion"`
-	AuditAPIVersion   string        `json:"auditApiVersion"`
-	RiskModel         []CapRisk     `json:"riskModel"`
-	AllowFlags        []string      `json:"allowFlags"`
-	Governance        CapGovernance `json:"governance"`
-	Commands          []string      `json:"commands"`
+	ContextAPIVersions []string      `json:"contextApiVersions"`
+	AuditAPIVersions   []string      `json:"auditApiVersions"`
+	RiskModel          []CapRisk     `json:"riskModel"`
+	AllowFlags         []string      `json:"allowFlags"`
+	Governance         CapGovernance `json:"governance"`
+	Commands           []string      `json:"commands"`
 }
 
 type CapRisk struct {
@@ -94,8 +95,8 @@ func capabilitiesData() CapabilitiesData {
 	return CapabilitiesData{
 		Tool: CapTool{Name: "srvgov", Version: version},
 		Supported: CapSupported{
-			ContextAPIVersion: "srvgov.io/context/v1",
-			AuditAPIVersion:   "srvgov.io/audit/v1",
+			ContextAPIVersions: []string{"srvgov.io/context/v1"},
+			AuditAPIVersions:   []string{"srvgov.io/audit/v1"},
 			RiskModel: []CapRisk{
 				{Level: "R0", Authorization: "free"},
 				{Level: "R1", Authorization: "--reason plus --yes or interactive confirmation"},
@@ -148,8 +149,8 @@ func newCapabilitiesCmd(f *cliFlags) *cobra.Command {
 				return nil
 			}
 			rows := [][]string{
-				{"contextApiVersion", data.Supported.ContextAPIVersion},
-				{"auditApiVersion", data.Supported.AuditAPIVersion},
+				{"contextApiVersions", strings.Join(data.Supported.ContextAPIVersions, ", ")},
+				{"auditApiVersions", strings.Join(data.Supported.AuditAPIVersions, ", ")},
 				{"authorization", "R1 requires --reason/--yes; R2 adds --ticket; R3 adds --allow-destructive"},
 				{"governance", "audit, RBAC, dry-run, strict TOFU, redaction, authorize-all governed fanout"},
 				{"commands", "ctx, exec, status, ports, logs, svc, file, docker, audit, doctor, version, capabilities, install"},

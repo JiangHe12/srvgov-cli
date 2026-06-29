@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.7
+
+### Changed
+
+- `capabilities -o json` now reports `contextApiVersions` and `auditApiVersions` arrays for family schema alignment.
+
 ## v0.8.6
 
 ### Added

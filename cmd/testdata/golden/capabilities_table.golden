@@ -1,7 +1,7 @@
-  KEY                  VALUE
---------------------+---------------------------------------------------------------------------------------------------
-  contextApiVersion    srvgov.io/context/v1
-  auditApiVersion      srvgov.io/audit/v1
-  authorization        R1 requires --reason/--yes; R2 adds --ticket; R3 adds --allow-destructive
-  governance           audit, RBAC, dry-run, strict TOFU, redaction, authorize-all governed fanout
-  commands             ctx, exec, status, ports, logs, svc, file, docker, audit, doctor, version, capabilities, install
+  KEY                   VALUE
+---------------------+---------------------------------------------------------------------------------------------------
+  contextApiVersions    srvgov.io/context/v1
+  auditApiVersions      srvgov.io/audit/v1
+  authorization         R1 requires --reason/--yes; R2 adds --ticket; R3 adds --allow-destructive
+  governance            audit, RBAC, dry-run, strict TOFU, redaction, authorize-all governed fanout
+  commands              ctx, exec, status, ports, logs, svc, file, docker, audit, doctor, version, capabilities, install

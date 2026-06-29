@@ -8,8 +8,12 @@
       "version": "dev"
     },
     "supported": {
-      "contextApiVersion": "srvgov.io/context/v1",
-      "auditApiVersion": "srvgov.io/audit/v1",
+      "contextApiVersions": [
+        "srvgov.io/context/v1"
+      ],
+      "auditApiVersions": [
+        "srvgov.io/audit/v1"
+      ],
       "riskModel": [
         {
           "level": "R0",
