@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.5
+
+### Fixed
+
+- Error output now respects `-o json` and emits the standard JSON envelope.
+
 ## v0.8.4
 
 ### Changed
