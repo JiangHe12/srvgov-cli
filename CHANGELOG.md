@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.8.4
+
+### Changed
+
+- Aligned root `--version` output with the family format by using the full CLI
+  name.
+
 ## v0.8.3
 
 ### Changed

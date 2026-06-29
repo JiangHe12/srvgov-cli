@@ -36,7 +36,7 @@ func NewRootCmd() *cobra.Command {
 
 func newRootCmdWith(f *cliFlags) *cobra.Command {
 	root := &cobra.Command{
-		Use:           "srvgov",
+		Use:           "srvgov-cli",
 		Short:         "Governed remote server operations for AI agents",
 		Version:       version,
 		SilenceUsage:  true,
