@@ -69,6 +69,6 @@ Release only when explicitly authorized. To cut version `X.Y.Z`:
 3. Run Build & Verify. `npm pack --dry-run` must list exactly `LICENSE`,
    `README.md`, `package.json`, `bin/srvgov-cli.js`, and `scripts/install.js`.
 4. Commit and push tag `vX.Y.Z`. The workflow tests, builds six platform
-   artifacts, injects `cmd.version/commit/date`, signs with cosign, publishes
+   artifacts, injects `main.version/commit/built`, signs with cosign, publishes
    checksums and a GitHub Release, then publishes npm through OIDC.
 5. Never publish or edit release artifacts manually.

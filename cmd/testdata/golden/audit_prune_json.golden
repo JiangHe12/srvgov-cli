@@ -1,5 +1,5 @@
 {
-  "apiVersion": "srvgov.io/v1",
+  "apiVersion": "srvgov-cli.io/v1",
   "kind": "AuditPruneResult",
   "success": true,
   "data": {

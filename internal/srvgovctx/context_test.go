@@ -1,7 +1,9 @@
 package srvgovctx
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	corectx "github.com/JiangHe12/opskit-core/ctx"
@@ -84,7 +86,7 @@ func TestContextNormalizeCanonicalizesAuthenticationOrder(t *testing.T) {
 }
 
 func TestStoreLifecycle(t *testing.T) {
-	corectx.Configure(corectx.Options{APIVersion: "srvgov.io/context/v1", ConfigDirName: ".srvgov"})
+	corectx.Configure(corectx.Options{APIVersion: SupportedContextAPIVersion, ConfigDirName: ".srvgov"})
 	t.Cleanup(func() {
 		corectx.Configure(corectx.Options{APIVersion: "opskit-core.io/context/v1", ConfigDirName: ".opskit"})
 	})
@@ -117,11 +119,45 @@ func TestStoreLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.APIVersion != "srvgov.io/context/v1" {
+	if cfg.APIVersion != SupportedContextAPIVersion {
 		t.Fatalf("APIVersion = %q", cfg.APIVersion)
 	}
 
 	if err := DeleteContext("dev"); err != nil {
 		t.Fatalf("DeleteContext() error = %v", err)
+	}
+}
+
+func TestLoadMigratesLegacyContextAPIVersion(t *testing.T) {
+	corectx.Configure(corectx.Options{APIVersion: SupportedContextAPIVersion, ConfigDirName: ".srvgov"})
+	t.Cleanup(func() {
+		corectx.Configure(corectx.Options{APIVersion: "opskit-core.io/context/v1", ConfigDirName: ".opskit"})
+		SetConfigPath("")
+	})
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`apiVersion: srvgov.io/context/v1
+current-context: dev
+contexts:
+    dev:
+        host: 127.0.0.1
+        port: 22
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	SetConfigPath(configPath)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.APIVersion != SupportedContextAPIVersion {
+		t.Fatalf("APIVersion = %q, want %q", cfg.APIVersion, SupportedContextAPIVersion)
+	}
+	updated, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(updated), legacyContextAPIVersion) || !strings.Contains(string(updated), SupportedContextAPIVersion) {
+		t.Fatalf("context file was not migrated:\n%s", updated)
 	}
 }

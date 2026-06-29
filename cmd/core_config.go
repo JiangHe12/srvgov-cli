@@ -9,24 +9,26 @@ import (
 	"github.com/JiangHe12/opskit-core/printer"
 	"github.com/JiangHe12/opskit-core/safety"
 	"github.com/JiangHe12/opskit-core/telemetry"
+
+	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
 
 func init() {
 	apperrors.Configure(apperrors.Options{
-		APIVersion: "srvgov.io/v1",
+		APIVersion: "srvgov-cli.io/v1",
 		Suggestions: map[apperrors.ErrorCode]string{
 			apperrors.CodeCredentialStoreMissing: "Re-run srvgov ctx set with a password, or configure a credential backend.",
 		},
 	})
 	audit.Configure(audit.Config{
-		APIVersion:         "srvgov.io/audit/v1",
+		APIVersion:         "srvgov-cli.io/audit/v1",
 		ConfigDirName:      ".srvgov",
 		PrivateKeyEnvVar:   "SRVGOV_AUDIT_PRIVATE_KEY",
 		TargetTypeJSONName: "objectType",
 	})
-	corectx.Configure(corectx.Options{APIVersion: "srvgov.io/context/v1", ConfigDirName: ".srvgov"})
+	corectx.Configure(corectx.Options{APIVersion: srvgovctx.SupportedContextAPIVersion, ConfigDirName: ".srvgov"})
 	lockfile.Configure(lockfile.Options{TimeoutEnvVar: "SRVGOV_LOCK_TIMEOUT"})
-	printer.Configure(printer.Options{APIVersion: "srvgov.io/v1", JSONEnvelopeByDefault: true})
+	printer.Configure(printer.Options{APIVersion: "srvgov-cli.io/v1", JSONEnvelopeByDefault: true})
 	safety.Configure(safety.Config{
 		Prompt:                   "Proceed with remote server operation? [y/N] ",
 		OperatorEnvVar:           "SRVGOV_OPERATOR",

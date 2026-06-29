@@ -10,7 +10,7 @@ import (
 var (
 	version = "dev"
 	commit  = unknownBuildValue
-	date    = unknownBuildValue
+	built   = unknownBuildValue
 )
 
 const unknownBuildValue = "unknown"
@@ -22,12 +22,12 @@ type versionInfo struct {
 }
 
 // SetVersionInfo supplies build metadata from main.
-func SetVersionInfo(nextVersion, nextCommit, nextDate string) {
+func SetVersionInfo(nextVersion, nextCommit, nextBuilt string) {
 	if nextVersion != "" {
 		version = nextVersion
 	}
 	commit = buildMetadataValue(nextCommit)
-	date = buildMetadataValue(nextDate)
+	built = buildMetadataValue(nextBuilt)
 }
 
 func buildMetadataValue(value string) string {
@@ -43,7 +43,7 @@ func newVersionCmd(f *cliFlags) *cobra.Command {
 		Short: "Show version information",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			info := versionInfo{Built: date, Commit: commit, Version: version}
+			info := versionInfo{Built: built, Commit: commit, Version: version}
 			p := newPrinter(f)
 			if f.Output == "json" {
 				return p.JSONData("VersionInfo", info)
@@ -95,8 +95,8 @@ func capabilitiesData() CapabilitiesData {
 	return CapabilitiesData{
 		Tool: CapTool{Name: "srvgov", Version: version},
 		Supported: CapSupported{
-			ContextAPIVersions: []string{"srvgov.io/context/v1"},
-			AuditAPIVersions:   []string{"srvgov.io/audit/v1"},
+			ContextAPIVersions: []string{"srvgov-cli.io/context/v1"},
+			AuditAPIVersions:   []string{"srvgov-cli.io/audit/v1"},
 			RiskModel: []CapRisk{
 				{Level: "R0", Authorization: "free"},
 				{Level: "R1", Authorization: "--reason plus --yes or interactive confirmation"},

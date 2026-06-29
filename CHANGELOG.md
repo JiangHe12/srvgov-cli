@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.9.1
+
+### Changed
+
+- Internal: release version injection now uses `main.version`, `main.commit`, and `main.built` for family workflow consistency.
+
+## v0.9.0
+
+### Changed
+
+- **BREAKING**: `apiVersion` changed from `srvgov.io/v1` to `srvgov-cli.io/v1` for family namespace alignment. Context and audit namespaces now use `srvgov-cli.io/*`; legacy context config and ctx export documents using `srvgov.io/*` remain readable and are migrated on use.
+
 ## v0.8.8
 
 ### Changed

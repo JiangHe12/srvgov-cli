@@ -1,4 +1,4 @@
-apiVersion: srvgov.io/ctx-export/v1
+apiVersion: srvgov-cli.io/ctx-export/v1
 name: dev
 context:
     server: ssh://alice@example.com:22

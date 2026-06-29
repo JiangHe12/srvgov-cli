@@ -34,7 +34,7 @@ func TestErrorJSON(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &envelope); err != nil {
 				t.Fatalf("error output is not JSON: %v; output=%q", err, out.String())
 			}
-			if envelope.APIVersion != "srvgov.io/v1" || envelope.Kind != "Error" || envelope.Success {
+			if envelope.APIVersion != "srvgov-cli.io/v1" || envelope.Kind != "Error" || envelope.Success {
 				t.Fatalf("envelope = %+v", envelope)
 			}
 			if envelope.Error == nil || envelope.Error.Code != apperrors.CodeUsageError || envelope.Error.Message != "ctx use requires 1 argument(s)" {

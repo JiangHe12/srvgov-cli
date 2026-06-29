@@ -1,5 +1,5 @@
 {
-  "apiVersion": "srvgov.io/v1",
+  "apiVersion": "srvgov-cli.io/v1",
   "kind": "Capabilities",
   "success": true,
   "data": {
@@ -9,10 +9,10 @@
     },
     "supported": {
       "contextApiVersions": [
-        "srvgov.io/context/v1"
+        "srvgov-cli.io/context/v1"
       ],
       "auditApiVersions": [
-        "srvgov.io/audit/v1"
+        "srvgov-cli.io/audit/v1"
       ],
       "riskModel": [
         {

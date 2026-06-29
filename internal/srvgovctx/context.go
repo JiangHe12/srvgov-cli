@@ -6,17 +6,22 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/JiangHe12/opskit-core/apperrors"
 	corectx "github.com/JiangHe12/opskit-core/ctx"
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	AuthPrivateKey = "private-key"
-	AuthAgent      = "agent"
-	AuthPassword   = "password"
+	SupportedContextAPIVersion = "srvgov-cli.io/context/v1"
+	legacyContextAPIVersion    = "srvgov.io/context/v1"
+	AuthPrivateKey             = "private-key"
+	AuthAgent                  = "agent"
+	AuthPassword               = "password"
 )
 
 var defaultAuthMethods = []string{AuthPrivateKey, AuthAgent, AuthPassword}
@@ -33,7 +38,10 @@ type Context struct {
 	Labels             map[string]string `yaml:"labels,omitempty"`
 }
 
-var store = corectx.NewStore(func(c *Context) *corectx.Base { return &c.Base })
+var (
+	configPathOverride string
+	store              = corectx.NewStore(func(c *Context) *corectx.Base { return &c.Base })
+)
 
 // Config is the srvgov context configuration.
 type Config = corectx.Config[Context]
@@ -137,24 +145,95 @@ func (c Context) Address() string {
 }
 
 // SetConfigPath overrides the core context file path for this process.
-func SetConfigPath(path string) { corectx.SetConfigPath(path) }
+func SetConfigPath(path string) {
+	configPathOverride = path
+	corectx.SetConfigPath(path)
+}
 
 // Load loads all contexts.
-func Load() (*Config, error) { return store.Load() }
+func Load() (*Config, error) {
+	if err := migrateLegacyContextAPIVersion(); err != nil {
+		return nil, err
+	}
+	return store.Load()
+}
 
 // SetContext adds or updates a normalized context.
 func SetContext(name string, item Context) error {
 	if err := item.Normalize(); err != nil {
 		return err
 	}
+	if err := migrateLegacyContextAPIVersion(); err != nil {
+		return err
+	}
 	return store.SetContext(name, item)
 }
 
 // UseContext switches the active context.
-func UseContext(name string) error { return store.UseContext(name) }
+func UseContext(name string) error {
+	if err := migrateLegacyContextAPIVersion(); err != nil {
+		return err
+	}
+	return store.UseContext(name)
+}
 
 // Current returns the active context.
-func Current() (*Context, string, error) { return store.Current() }
+func Current() (*Context, string, error) {
+	if err := migrateLegacyContextAPIVersion(); err != nil {
+		return nil, "", err
+	}
+	return store.Current()
+}
 
 // DeleteContext removes a context.
-func DeleteContext(name string) error { return store.DeleteContext(name) }
+func DeleteContext(name string) error {
+	if err := migrateLegacyContextAPIVersion(); err != nil {
+		return err
+	}
+	return store.DeleteContext(name)
+}
+
+func migrateLegacyContextAPIVersion() error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(path) //nolint:gosec // Path is the configured srvgov context file path.
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return apperrors.New(apperrors.CodeLocalIOError, "failed to read context file", err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil //nolint:nilerr // Let the core context loader report malformed config consistently.
+	}
+	if cfg.APIVersion != legacyContextAPIVersion {
+		return nil
+	}
+	cfg.APIVersion = SupportedContextAPIVersion
+	updated, err := yaml.Marshal(&cfg)
+	if err != nil {
+		return apperrors.New(apperrors.CodeLocalIOError, "failed to migrate context apiVersion", err)
+	}
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	if err := os.WriteFile(path, updated, mode); err != nil {
+		return apperrors.New(apperrors.CodeLocalIOError, "failed to write migrated context file", err)
+	}
+	return nil
+}
+
+func configPath() (string, error) {
+	if configPathOverride != "" {
+		return configPathOverride, nil
+	}
+	dir, err := corectx.ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.yaml"), nil
+}

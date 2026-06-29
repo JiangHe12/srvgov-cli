@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	ctxExportAPIVersion = "srvgov.io/ctx-export/v1"
-	redactedCredential  = "<REDACTED>"
+	ctxExportAPIVersion       = "srvgov-cli.io/ctx-export/v1"
+	legacyCtxExportAPIVersion = "srvgov.io/ctx-export/v1"
+	redactedCredential        = "<REDACTED>"
 )
 
 type contextExportDocument struct {
@@ -183,7 +184,7 @@ func readContextExportDocument(path string) (contextExportDocument, error) {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return contextExportDocument{}, apperrors.New(apperrors.CodeUsageError, "failed to parse context import file", err)
 	}
-	if doc.APIVersion != ctxExportAPIVersion {
+	if doc.APIVersion != ctxExportAPIVersion && doc.APIVersion != legacyCtxExportAPIVersion {
 		return contextExportDocument{}, apperrors.New(apperrors.CodeUnsupportedProtocol, fmt.Sprintf("unsupported context export apiVersion %q", doc.APIVersion), nil)
 	}
 	return doc, nil

@@ -40,7 +40,7 @@ func decodeJSONRawData(t *testing.T, output, wantKind string) json.RawMessage {
 
 func assertJSONEnvelope(t *testing.T, apiVersion, kind string, success bool, wantKind string) {
 	t.Helper()
-	if apiVersion != "srvgov.io/v1" || kind != wantKind || !success {
-		t.Fatalf("envelope = apiVersion=%q kind=%q success=%t, want apiVersion=srvgov.io/v1 kind=%s success=true", apiVersion, kind, success, wantKind)
+	if apiVersion != "srvgov-cli.io/v1" || kind != wantKind || !success {
+		t.Fatalf("envelope = apiVersion=%q kind=%q success=%t, want apiVersion=srvgov-cli.io/v1 kind=%s success=true", apiVersion, kind, success, wantKind)
 	}
 }

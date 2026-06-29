@@ -460,7 +460,7 @@ func TestExecFanoutSortsDeduplicatesRedactsAndAuditsEachTarget(t *testing.T) {
 		t.Fatalf("exec fanout error = %v", err)
 	}
 	const v2Output = `{
-  "apiVersion": "srvgov.io/v1",
+  "apiVersion": "srvgov-cli.io/v1",
   "kind": "FanoutResult",
   "success": true,
   "data": {

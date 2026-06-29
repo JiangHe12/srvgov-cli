@@ -46,6 +46,20 @@ func TestContextExportRedactsCredentialsAndImportRequiresYes(t *testing.T) {
 	if imported.Password != "" || imported.IdentityPassphrase != "" {
 		t.Fatalf("imported credentials = password:%q passphrase:%q", imported.Password, imported.IdentityPassphrase)
 	}
+
+	legacyFile := filepath.Join(t.TempDir(), "legacy-ctx.yaml")
+	legacyExport := strings.Replace(exported, ctxExportAPIVersion, legacyCtxExportAPIVersion, 1)
+	if err := os.WriteFile(legacyFile, []byte(legacyExport), 0o600); err != nil {
+		t.Fatalf("WriteFile(legacy) error = %v", err)
+	}
+	runCommand(t, configPath, "--non-interactive", "--yes", "ctx", "import", "-f", legacyFile, "--rename", "legacy-copy")
+	cfg, err = srvgovctx.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if _, ok := cfg.Contexts["legacy-copy"]; !ok {
+		t.Fatalf("legacy context was not imported: %#v", cfg.Contexts)
+	}
 }
 
 func TestContextExportCanIncludePlainYamlCredentialsAndPreservesRefs(t *testing.T) {
