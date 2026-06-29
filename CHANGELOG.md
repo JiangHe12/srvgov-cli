@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.9.2
+
+### Changed
+
+- Updated opskit-core to v1.1.4.
+
 ## v0.9.1
 
 ### Changed
