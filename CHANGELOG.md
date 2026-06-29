@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.6
+
+### Added
+
+- Global flags: `--debug`, `--trace`, `--no-color`.
+
 ## v0.8.5
 
 ### Fixed

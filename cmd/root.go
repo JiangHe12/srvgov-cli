@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
 	"github.com/JiangHe12/opskit-core/apperrors"
@@ -19,6 +20,9 @@ var auditWarningMu sync.Mutex
 
 type cliFlags struct {
 	Output         string
+	Debug          bool
+	Trace          bool
+	NoColor        bool
 	Config         string
 	Context        string
 	Operator       string
@@ -42,6 +46,7 @@ func newRootCmdWith(f *cliFlags) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			applyGlobalFlags(f)
 			f.Out = cmd.OutOrStdout()
 			f.Err = cmd.ErrOrStderr()
 			if f.Config != "" {
@@ -50,6 +55,9 @@ func newRootCmdWith(f *cliFlags) *cobra.Command {
 		},
 	}
 	root.PersistentFlags().StringVarP(&f.Output, "output", "o", "table", "Output format: table | json | plain")
+	root.PersistentFlags().BoolVar(&f.Debug, "debug", false, "Enable debug logging")
+	root.PersistentFlags().BoolVar(&f.Trace, "trace", false, "Enable trace logging (implies --debug)")
+	root.PersistentFlags().BoolVar(&f.NoColor, "no-color", false, "Disable colored output")
 	root.PersistentFlags().StringVar(&f.Config, "config", "", "Temporarily override config file path")
 	root.PersistentFlags().StringVar(&f.Context, "context", "", "Server context name (default current)")
 	root.PersistentFlags().StringVar(&f.Operator, "operator", "", "Human operator identity")
@@ -72,6 +80,16 @@ func newRootCmdWith(f *cliFlags) *cobra.Command {
 		newInstallCmd(f),
 	)
 	return root
+}
+
+func applyGlobalFlags(f *cliFlags) {
+	if f.Trace {
+		f.Debug = true
+	}
+	if f.NoColor {
+		_ = os.Setenv("NO_COLOR", "1")
+		color.NoColor = true
+	}
 }
 
 func newPrinter(f *cliFlags) *printer.Printer {
