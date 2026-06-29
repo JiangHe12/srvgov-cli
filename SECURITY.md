@@ -54,5 +54,6 @@ authorization values.
 
 Release binaries are built by GitHub Actions, signed with cosign, and published
 with SHA-256 checksums. npm installation verifies the canonical checksums unless
-the operator explicitly sets `SRVGOV_CLI_SKIP_VERIFY=1`. Avoid untrusted mirrors
+the operator explicitly sets `SRVGOV_SKIP_VERIFY=1`. Deprecated
+`SRVGOV_CLI_SKIP_VERIFY=1` remains accepted. Avoid untrusted mirrors
 and never disable verification in production automation.

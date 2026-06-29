@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.8.8
+
+### Changed
+
+- Installer environment variables now prefer the family-standard `SRVGOV_DOWNLOAD_MIRROR` and `SRVGOV_SKIP_VERIFY` names; deprecated `SRVGOV_CLI_DOWNLOAD_MIRROR` and `SRVGOV_CLI_SKIP_VERIFY` remain supported.
+
 ## v0.8.7
 
 ### Changed
