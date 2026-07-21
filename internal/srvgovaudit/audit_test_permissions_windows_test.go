@@ -13,7 +13,11 @@ import (
 
 func secureAuditTestDirectory(t *testing.T, path string) {
 	t.Helper()
-	for parent := filepath.Dir(path); !strings.EqualFold(parent, os.TempDir()); parent = filepath.Dir(parent) {
+	tempRoot, err := filepath.EvalSymlinks(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for parent := filepath.Dir(path); !strings.EqualFold(parent, tempRoot); parent = filepath.Dir(parent) {
 		setAuditTestACL(t, parent)
 	}
 	if err := os.Mkdir(path, 0o700); err != nil {
@@ -60,8 +64,10 @@ func setAuditTestACL(t *testing.T, path string) {
 	if err := windows.SetNamedSecurityInfo(
 		path,
 		windows.SE_FILE_OBJECT,
-		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
-		nil,
+		windows.OWNER_SECURITY_INFORMATION|
+			windows.DACL_SECURITY_INFORMATION|
+			windows.PROTECTED_DACL_SECURITY_INFORMATION,
+		user.User.Sid,
 		nil,
 		dacl,
 		nil,

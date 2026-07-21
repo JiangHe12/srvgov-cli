@@ -49,9 +49,7 @@ func TestAuditQueryRedactsLegacyRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal() error = %v", err)
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	writePrivateAuditTestFile(t, path, append(data, '\n'))
 
 	for _, format := range []string{"json", "table"} {
 		output, err := executeRoot(t, filepath.Join(t.TempDir(), "config.yaml"),
@@ -101,9 +99,7 @@ func TestAuditQueryClearsForgedFingerprintFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writePrivateAuditTestFile(t, path, append(data, '\n'))
 	output, err := executeRoot(
 		t,
 		filepath.Join(t.TempDir(), "config.yaml"),
@@ -148,9 +144,7 @@ func TestAuditQueryFiltersEventType(t *testing.T) {
 		content.Write(data)
 		content.WriteByte('\n')
 	}
-	if err := os.WriteFile(path, []byte(content.String()), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	writePrivateAuditTestFile(t, path, []byte(content.String()))
 
 	output, err := executeRoot(t, filepath.Join(t.TempDir(), "config.yaml"),
 		"-o", "json", "audit", "query", "--path", path, "--type", "authorization.denied",
@@ -195,9 +189,7 @@ func TestAuditQueryReverseAndLimitAreAppliedAfterDecode(t *testing.T) {
 		content.Write(data)
 		content.WriteByte('\n')
 	}
-	if err := os.WriteFile(path, []byte(content.String()), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	writePrivateAuditTestFile(t, path, []byte(content.String()))
 
 	output, err := executeRoot(t, filepath.Join(t.TempDir(), "config.yaml"),
 		"-o", "json", "audit", "query", "--path", path, "--reverse", "--limit", "1",
@@ -280,9 +272,7 @@ func writeEncryptedAuditFixture(t *testing.T) (string, *age.X25519Identity) {
 	}
 	dir := secureAuditTestDir(t)
 	publicKeyPath := filepath.Join(dir, "audit.age.pub")
-	if err := os.WriteFile(publicKeyPath, []byte(identity.Recipient().String()+"\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile(public key) error = %v", err)
-	}
+	writePrivateAuditTestFile(t, publicKeyPath, []byte(identity.Recipient().String()+"\n"))
 	path := filepath.Join(dir, "audit.log")
 	event := srvgovaudit.Event{
 		Timestamp: time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC),
@@ -302,9 +292,7 @@ func writeEncryptedAuditFixture(t *testing.T) (string, *age.X25519Identity) {
 
 func TestAuditVerifyStrictReturnsValidationFailed(t *testing.T) {
 	path := filepath.Join(secureAuditTestDir(t), "audit.log")
-	if err := os.WriteFile(path, []byte("{not-json}\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	writePrivateAuditTestFile(t, path, []byte("{not-json}\n"))
 
 	output, err := executeRoot(t, filepath.Join(t.TempDir(), "config.yaml"),
 		"-o", "json", "audit", "verify", "--path", path, "--strict",
@@ -406,9 +394,7 @@ func TestAuditPruneDeletesRotatedLogsOnlyWithConfirm(t *testing.T) {
 			`{"timestamp":"2026-0%d-01T00:00:00Z","eventType":"test.event","operator":"test","status":"succeeded"}`+"\n",
 			index+1,
 		)
-		if err := os.WriteFile(filePath, []byte(line), 0o600); err != nil {
-			t.Fatalf("WriteFile(%s) error = %v", filePath, err)
-		}
+		writePrivateAuditTestFile(t, filePath, []byte(line))
 	}
 
 	output, err := executeRoot(t, filepath.Join(t.TempDir(), "config.yaml"),
@@ -780,9 +766,7 @@ func TestAuditPruneRejectsGovernedAliasesAndArtifactNamespaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	secureMutationAuditTestParent(t, filepath.Dir(defaultPath))
-	if err := os.WriteFile(defaultPath, []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writePrivateAuditTestFile(t, defaultPath, []byte("{}\n"))
 	canonical, err := normalizeAuditPruneTarget(
 		f,
 		filepath.Join(filepath.Dir(defaultPath), ".", filepath.Base(defaultPath)),
@@ -844,13 +828,11 @@ func prepareGovernedAuditPruneSequence(t *testing.T, roles map[string]string, co
 		t.Fatal(err)
 	}
 	auditPath := filepath.Join(filepath.Dir(configPath), "audit.log")
-	if err := os.WriteFile(
+	writePrivateAuditTestFile(
+		t,
 		auditPath,
 		[]byte(`{"timestamp":"2026-04-01T00:00:00Z","eventType":"test.event","operator":"test","status":"succeeded"}`+"\n"),
-		0o600,
-	); err != nil {
-		t.Fatal(err)
-	}
+	)
 	rotated := make([]string, 0, count)
 	for i := 1; i <= count; i++ {
 		filePath := auditPath + "." + []string{"20260101-000000", "20260201-000000", "20260301-000000"}[i-1] + ".log"
@@ -858,9 +840,7 @@ func prepareGovernedAuditPruneSequence(t *testing.T, roles map[string]string, co
 			`{"timestamp":"2026-0%d-01T00:00:00Z","eventType":"test.event","operator":"test","status":"succeeded"}`+"\n",
 			i,
 		)
-		if err := os.WriteFile(filePath, []byte(line), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		writePrivateAuditTestFile(t, filePath, []byte(line))
 		rotated = append(rotated, filePath)
 	}
 	return configPath, auditPath, rotated
@@ -869,15 +849,21 @@ func prepareGovernedAuditPruneSequence(t *testing.T, roles map[string]string, co
 func writeV2AuditEnvelope(t *testing.T, path string) {
 	t.Helper()
 	content := " { \"kind\": \"AuditEnvelope\", \"apiVersion\": \"opskit-core.io/audit/v2\" }\n"
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writePrivateAuditTestFile(t, path, []byte(content))
 }
 
 func writeAuditTestLine(t *testing.T, path, line string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(line+"\n"), 0o600); err != nil {
-		t.Fatal(err)
+	writePrivateAuditTestFile(t, path, []byte(line+"\n"))
+}
+
+func writePrivateAuditTestFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v", path, err)
+	}
+	if err := secureMutationSpoolFile(path); err != nil {
+		t.Fatalf("secure audit test file %s: %v", path, err)
 	}
 }
 

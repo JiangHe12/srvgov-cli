@@ -195,7 +195,11 @@ func TestAppendSerializesConcurrentRecordsInProcess(t *testing.T) {
 
 func privateAuditTestPath(t *testing.T) string {
 	t.Helper()
-	directory := filepath.Join(t.TempDir(), "private-audit")
+	tempDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks(test temp directory) error = %v", err)
+	}
+	directory := filepath.Join(tempDir, "private-audit")
 	secureAuditTestDirectory(t, directory)
 	return filepath.Join(directory, "audit.log")
 }

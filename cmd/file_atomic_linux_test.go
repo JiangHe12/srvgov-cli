@@ -325,7 +325,12 @@ func runAtomicFileWriteCommand(
 	wantFailure bool,
 ) {
 	t.Helper()
-	command := exec.Command("sh", "-c", fileWriteCommand(localFileWriteTargetBinding(t, target), maxBytes, []byte(expectedContent)))
+	command := exec.CommandContext(
+		t.Context(),
+		"sh",
+		"-c",
+		fileWriteCommand(localFileWriteTargetBinding(t, target), maxBytes, []byte(expectedContent)),
+	)
 	command.Stdin = strings.NewReader(input)
 	output, err := command.CombinedOutput()
 	if wantFailure && err == nil {
@@ -351,7 +356,8 @@ func directAtomicFileWriteCommand(t *testing.T, target string, maxBytes int, exp
 	t.Helper()
 	binding := localFileWriteTargetBinding(t, target)
 	digest := sha256.Sum256([]byte(expected))
-	return exec.Command(
+	return exec.CommandContext(
+		t.Context(),
 		"sh",
 		"-c",
 		atomicFileWriteScript,
@@ -382,7 +388,7 @@ func localFileWriteTargetBinding(t *testing.T, target string) fileWriteTargetBin
 	return fileWriteTargetBinding{
 		ResolvedDirectory: filepath.ToSlash(resolved),
 		Base:              base,
-		DirectoryIdentity: fmt.Sprintf("%d:%d", uint64(stat.Dev), stat.Ino),
+		DirectoryIdentity: fmt.Sprintf("%d:%d", stat.Dev, stat.Ino),
 	}
 }
 

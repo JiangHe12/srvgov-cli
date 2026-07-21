@@ -25,7 +25,7 @@ func ensureMutationSpoolDirectory(path string) error {
 		created = true
 	}
 	if created {
-		if err := os.Chmod(path, 0o700); err != nil {
+		if err := os.Chmod(path, 0o700); err != nil { //nolint:gosec // Directories require owner-only traversal permission.
 			return apperrors.New(apperrors.CodeLocalIOError, "failed to secure mutation outcome spool directory", nil)
 		}
 	}
@@ -56,8 +56,8 @@ func verifyMutationSpoolParent(path string) error {
 		if !ok {
 			return apperrors.New(apperrors.CodeLocalIOError, "failed to identify mutation outcome spool ancestor owner", nil)
 		}
-		uid := uint64(stat.Uid)
-		euid := uint64(os.Geteuid())
+		uid := int64(stat.Uid)
+		euid := int64(os.Geteuid())
 		if uid != euid && uid != 0 {
 			return apperrors.New(apperrors.CodeLocalIOError, "mutation outcome spool ancestor has an untrusted owner", nil)
 		}
@@ -131,7 +131,7 @@ func verifyMutationSpoolOwner(info os.FileInfo, path string) error {
 
 func hasTrustedMutationSpoolOwner(info os.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && uint64(stat.Uid) == uint64(os.Geteuid())
+	return ok && int64(stat.Uid) == int64(os.Geteuid())
 }
 
 func commitMutationSpoolFile(from, to string) error {
