@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
 	"github.com/JiangHe12/srvgov-cli/internal/cmdclass"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
@@ -158,8 +158,10 @@ func TestSvcProtectedActionRunsWithHumanDestructiveAllow(t *testing.T) {
 		t.Fatalf("commands = %#v, want %q", runner.commands, command)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 1 || events[0].RiskTier != "R3" || events[0].EventType != srvgovaudit.EventTypeSvcAction {
-		t.Fatalf("audit events = %#v", events)
+	intent, outcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeSvcAction), "dev", "R3")
+	if intent.Metadata == nil || intent.Metadata.PayloadFingerprint == "" ||
+		outcome.Status != srvgovaudit.StatusSucceeded {
+		t.Fatalf("mutation events = %#v / %#v", intent, outcome)
 	}
 }
 

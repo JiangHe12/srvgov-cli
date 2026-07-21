@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 )
 
 type itemKind uint8
@@ -18,38 +18,40 @@ const (
 )
 
 type item struct {
-	kind itemKind
-	text string
+	kind              itemKind
+	text              string
+	quoted            bool
+	unquotedExpansion bool
 }
 
 var readOnlyCommands = map[string]bool{
-	"cat":        true,
-	"date":       true,
-	"df":         true,
-	"du":         true,
-	"echo":       true,
-	"free":       true,
-	"grep":       true,
-	"head":       true,
-	"hostname":   true,
-	"id":         true,
-	"journalctl": true,
-	"ls":         true,
-	"netstat":    true,
-	"pgrep":      true,
-	"printf":     true,
-	"ps":         true,
-	"pwd":        true,
-	"stat":       true,
-	"tail":       true,
-	"uname":      true,
-	"uptime":     true,
-	"wc":         true,
-	"whoami":     true,
+	"cat":      true,
+	"df":       true,
+	"du":       true,
+	"echo":     true,
+	"free":     true,
+	"grep":     true,
+	"head":     true,
+	"id":       true,
+	"ls":       true,
+	"netstat":  true,
+	"pgrep":    true,
+	"printf":   true,
+	"ps":       true,
+	"pwd":      true,
+	"readlink": true,
+	"stat":     true,
+	"tail":     true,
+	"uname":    true,
+	"uptime":   true,
+	"wc":       true,
+	"whoami":   true,
 }
 
 var dangerousCommands = map[string]bool{
+	".":              true,
 	"bash":           true,
+	"builtin":        true,
 	"busybox":        true,
 	"chrt":           true,
 	"command":        true,
@@ -57,6 +59,7 @@ var dangerousCommands = map[string]bool{
 	"dd":             true,
 	"doas":           true,
 	"docker-compose": true,
+	"exec":           true,
 	"expect":         true,
 	"fdisk":          true,
 	"firewall-cmd":   true,
@@ -84,6 +87,7 @@ var dangerousCommands = map[string]bool{
 	"shutdown":       true,
 	"sh":             true,
 	"socat":          true,
+	"source":         true,
 	"stdbuf":         true,
 	"su":             true,
 	"sudo":           true,
@@ -91,6 +95,7 @@ var dangerousCommands = map[string]bool{
 	"tclsh":          true,
 	"time":           true,
 	"timeout":        true,
+	"trap":           true,
 	"ufw":            true,
 	"watch":          true,
 	"wipefs":         true,
@@ -126,11 +131,11 @@ func Classify(command string) safety.Risk {
 	base := safety.R0
 	hasOperator := false
 	hasCommand := false
-	segment := make([]string, 0, len(items))
+	segment := make([]item, 0, len(items))
 	for i := 0; i < len(items); i++ {
 		current := items[i]
 		if current.kind == wordItem {
-			segment = append(segment, current.text)
+			segment = append(segment, current)
 			continue
 		}
 		if current.text == "&" {
@@ -140,7 +145,8 @@ func Classify(command string) safety.Risk {
 			if i+1 >= len(items) || items[i+1].kind != wordItem {
 				return safety.R3
 			}
-			if current.text != "<" && isSensitiveWriteTarget(items[i+1].text) {
+			if items[i+1].unquotedExpansion ||
+				current.text != "<" && isSensitiveWriteTarget(items[i+1].text) {
 				return safety.R3
 			}
 			i++
@@ -170,13 +176,21 @@ func Classify(command string) safety.Risk {
 	return base
 }
 
-//nolint:gocyclo // The explicit command rule table is easier to audit than dispersed callbacks.
-func classifySegment(words []string) safety.Risk {
-	if len(words) == 0 {
+func classifySegment(parts []item) safety.Risk {
+	if len(parts) == 0 || hasUnquotedExpansion(parts) {
 		return safety.R3
 	}
+	words := make([]string, len(parts))
+	for i := range parts {
+		words[i] = parts[i].text
+	}
+	return classifyWords(words)
+}
+
+//nolint:gocyclo // The explicit command rule table is easier to audit than dispersed callbacks.
+func classifyWords(words []string) safety.Risk {
 	command := commandName(words[0])
-	if dangerousCommands[command] || strings.HasPrefix(command, "mkfs.") {
+	if command == "!" || isShellAssignment(words[0]) || dangerousCommands[command] || strings.HasPrefix(command, "mkfs.") {
 		return safety.R3
 	}
 	for _, word := range words {
@@ -187,10 +201,13 @@ func classifySegment(words []string) safety.Risk {
 
 	switch command {
 	case "rm":
-		if destructiveRM(words[1:]) {
-			return safety.R3
-		}
-		return safety.R2
+		return classifyRM(words[1:])
+	case "date":
+		return classifyDate(words[1:])
+	case "hostname":
+		return classifyHostname(words[1:])
+	case "journalctl":
+		return classifyJournalctl(words[1:])
 	case "curl":
 		if curlUploads(words[1:]) {
 			return safety.R3
@@ -227,10 +244,7 @@ func classifySegment(words []string) safety.Risk {
 	case "docker":
 		return classifyDocker(words)
 	case "ip":
-		if len(words) >= 2 && hasAnyWord(words[1:2], "address", "addr", "link", "route", "rule", "neighbor", "netns") {
-			return safety.R0
-		}
-		return safety.R2
+		return classifyIP(words[1:])
 	}
 
 	if writeCommands[command] {
@@ -268,7 +282,7 @@ func classifyDocker(words []string) safety.Risk {
 	if hasAnyWord(
 		[]string{action},
 		"run", "create", "exec", "build", "commit", "cp",
-		"import", "save", "load", "export", "prune",
+		"import", "save", "load", "export", "prune", "rm", "remove", "rmi",
 	) {
 		return safety.R3
 	}
@@ -279,7 +293,238 @@ func classifyDocker(words []string) safety.Risk {
 	) {
 		return safety.R0
 	}
-	return safety.R2
+	if hasAnyWord([]string{action}, "start", "stop", "restart") {
+		return safety.R2
+	}
+	return safety.R3
+}
+
+func classifyDate(args []string) safety.Risk {
+	if len(args) == 0 {
+		return safety.R0
+	}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case strings.HasPrefix(arg, "-s"), arg == "--set", strings.HasPrefix(arg, "--set="):
+			return safety.R3
+		case strings.HasPrefix(arg, "+"):
+			continue
+		case hasExactWord(arg, "-u", "-R", "-I", "--utc", "--universal", "--rfc-email", "--debug", "--resolution", "--help", "--version", "--iso-8601"):
+			continue
+		case arg == "-d", arg == "-f", arg == "-r", arg == "--date", arg == "--file", arg == "--reference":
+			if i+1 >= len(args) {
+				return safety.R3
+			}
+			i++
+		case strings.HasPrefix(arg, "-d"), strings.HasPrefix(arg, "-f"), strings.HasPrefix(arg, "-r"),
+			strings.HasPrefix(arg, "--date="), strings.HasPrefix(arg, "--file="), strings.HasPrefix(arg, "--reference="),
+			strings.HasPrefix(arg, "--iso-8601="), strings.HasPrefix(arg, "--rfc-3339="):
+			continue
+		default:
+			return safety.R3
+		}
+	}
+	return safety.R0
+}
+
+func classifyHostname(args []string) safety.Risk {
+	for _, arg := range args {
+		if !hasExactWord(
+			arg,
+			"-a", "--alias", "-d", "--domain", "-f", "--fqdn", "--long",
+			"-i", "--ip-address", "-I", "--all-ip-addresses", "-s", "--short",
+			"-y", "--yp", "--nis", "-V", "--version", "-h", "--help",
+		) {
+			return safety.R3
+		}
+	}
+	return safety.R0
+}
+
+//nolint:gocyclo // Explicit option parsing prevents maintenance flags from hiding inside read syntax.
+func classifyJournalctl(args []string) safety.Risk {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		lower := strings.ToLower(arg)
+		if hasAnyWord(
+			[]string{lower},
+			"--rotate", "--flush", "--sync", "--relinquish-var",
+			"--smart-relinquish-var", "--setup-keys", "--update-catalog",
+			"--cursor-file",
+		) || strings.HasPrefix(lower, "--vacuum-") {
+			return safety.R3
+		}
+		if strings.HasPrefix(lower, "--cursor-file=") {
+			return safety.R3
+		}
+		if arg == "" || arg[0] != '-' {
+			continue
+		}
+		if !strings.HasPrefix(arg, "--") {
+			if arg == "-b" && i+1 < len(args) && isJournalBootOffset(args[i+1]) {
+				i++
+				continue
+			}
+			next, ok := classifyJournalShortOption(args, i)
+			if !ok {
+				return safety.R3
+			}
+			i = next
+			continue
+		}
+		if hasExactWord(
+			arg,
+			"--all", "--boot", "--case-sensitive", "--catalog", "--disk-usage",
+			"--dmesg", "--fields", "--follow", "--full", "--header", "--help",
+			"--list-boots", "--list-fields", "--local", "--merge", "--no-hostname",
+			"--no-pager", "--no-tail", "--pager-end", "--quiet", "--reverse",
+			"--show-cursor", "--system", "--user", "--utc", "--verify", "--version",
+		) {
+			if arg == "--boot" && i+1 < len(args) && isJournalBootOffset(args[i+1]) {
+				i++
+			}
+			continue
+		}
+		if hasExactWord(
+			arg,
+			"--after-cursor", "--cursor", "--directory",
+			"--facility", "--field", "--file", "--grep", "--identifier", "--image",
+			"--interval", "--lines", "--machine", "--namespace",
+			"--output", "--output-fields", "--priority", "--root",
+			"--since", "--unit", "--until", "--user-unit",
+			"--verify-key",
+		) {
+			if i+1 >= len(args) || strings.HasPrefix(args[i+1], "--") {
+				return safety.R3
+			}
+			i++
+			continue
+		}
+		if hasOptionPrefix(
+			[]string{arg},
+			"--after-cursor=", "--boot=", "--cursor=", "--directory=",
+			"--facility=", "--field=", "--file=", "--grep=", "--identifier=", "--image=",
+			"--interval=", "--lines=", "--machine=", "--namespace=", "--output=",
+			"--output-fields=", "--priority=", "--root=", "--since=", "--unit=",
+			"--until=", "--user-unit=", "--verify-key=",
+		) {
+			continue
+		}
+		return safety.R3
+	}
+	return safety.R0
+}
+
+func classifyJournalShortOption(args []string, index int) (int, bool) {
+	option := strings.TrimPrefix(args[index], "-")
+	if option == "" {
+		return index, false
+	}
+	runes := []rune(option)
+	for pos, flag := range runes {
+		if flag == 'b' && pos+1 < len(runes) && isJournalBootOffset(string(runes[pos+1:])) {
+			return index, true
+		}
+		if strings.ContainsRune("abefhklmNqrxV", flag) {
+			continue
+		}
+		if !strings.ContainsRune("cDFgMnopStuU", flag) {
+			return index, false
+		}
+		if pos+1 < len(runes) {
+			return index, true
+		}
+		if index+1 >= len(args) || strings.HasPrefix(args[index+1], "--") {
+			return index, false
+		}
+		return index + 1, true
+	}
+	return index, true
+}
+
+func isJournalBootOffset(value string) bool {
+	value = strings.TrimPrefix(strings.TrimPrefix(value, "-"), "+")
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+//nolint:gocyclo // The explicit object/action allowlist keeps unknown ip combinations fail-closed.
+func classifyIP(args []string) safety.Risk {
+	index := 0
+	for index < len(args) && strings.HasPrefix(args[index], "-") {
+		option := args[index]
+		if hasExactWord(
+			option,
+			"-0", "-4", "-6", "-B", "-M", "-a", "-all", "-br", "-brief", "-c", "-color",
+			"-d", "-details", "-h", "-human", "-iec", "-j", "-json", "-o",
+			"-oneline", "-p", "-pretty", "-r", "-resolve", "-s", "-statistics",
+			"-t", "-timestamp", "-ts",
+		) {
+			index++
+			continue
+		}
+		if hasExactWord(option, "-f", "-family", "-netns", "-rcvbuf") {
+			if index+1 >= len(args) {
+				return safety.R3
+			}
+			index += 2
+			continue
+		}
+		return safety.R3
+	}
+	if index >= len(args) {
+		return safety.R3
+	}
+
+	object := strings.ToLower(args[index])
+	index++
+	action := ""
+	if index < len(args) {
+		action = strings.ToLower(args[index])
+	}
+
+	switch object {
+	case "a", "addr", "address":
+		if action == "" || isIPShowAction(action) {
+			return safety.R0
+		}
+	case "l", "link":
+		if action == "" || isIPShowAction(action) {
+			return safety.R0
+		}
+		if action == "property" && index+1 < len(args) && isIPShowAction(strings.ToLower(args[index+1])) {
+			return safety.R0
+		}
+	case "r", "route":
+		if action == "" || isIPShowAction(action) || hasAnyWord([]string{action}, "g", "get") {
+			return safety.R0
+		}
+	case "ru", "rule":
+		if action == "" || isIPShowAction(action) {
+			return safety.R0
+		}
+	case "neighbor", "neigh":
+		if action == "" || isIPShowAction(action) {
+			return safety.R0
+		}
+	case "netns":
+		if hasAnyWord([]string{action}, "l", "list", "list-id", "identify", "pids") {
+			return safety.R0
+		}
+	}
+	return safety.R3
+}
+
+func isIPShowAction(action string) bool {
+	return hasAnyWord([]string{action}, "l", "list", "ls", "lst", "sh", "sho", "show")
 }
 
 func classifySystemctl(words []string) safety.Risk {
@@ -323,13 +568,24 @@ func scan(command string) ([]item, bool) {
 	quote := rune(0)
 	escaped := false
 	atBoundary := true
+	tokenStarted := false
+	tokenQuoted := false
+	tokenUnquotedExpansion := false
 
 	flush := func() {
-		if token.Len() == 0 {
+		if !tokenStarted {
 			return
 		}
-		items = append(items, item{kind: wordItem, text: token.String()})
+		items = append(items, item{
+			kind:              wordItem,
+			text:              token.String(),
+			quoted:            tokenQuoted,
+			unquotedExpansion: tokenUnquotedExpansion,
+		})
 		token.Reset()
+		tokenStarted = false
+		tokenQuoted = false
+		tokenUnquotedExpansion = false
 	}
 
 	for pos := 0; pos < len(command); {
@@ -340,7 +596,16 @@ func scan(command string) ([]item, bool) {
 		pos += size
 
 		if escaped {
+			if r == '\n' {
+				escaped = false
+				continue
+			}
+			if quote == '"' && !strings.ContainsRune("$`\"\\", r) {
+				token.WriteRune('\\')
+			}
 			token.WriteRune(r)
+			tokenStarted = true
+			tokenQuoted = true
 			escaped = false
 			atBoundary = false
 			continue
@@ -358,6 +623,7 @@ func scan(command string) ([]item, bool) {
 				return nil, false
 			}
 			token.WriteRune(r)
+			tokenStarted = true
 			atBoundary = false
 			continue
 		}
@@ -365,9 +631,10 @@ func scan(command string) ([]item, bool) {
 		switch {
 		case r == '\\':
 			escaped = true
-			atBoundary = false
 		case r == '\'' || r == '"':
 			quote = r
+			tokenStarted = true
+			tokenQuoted = true
 			atBoundary = false
 		case r == '$' || r == '`' || r == '(' || r == ')':
 			return nil, false
@@ -404,6 +671,10 @@ func scan(command string) ([]item, bool) {
 			atBoundary = true
 		default:
 			token.WriteRune(r)
+			if isExpansionRune(r) || r == '~' && !tokenStarted {
+				tokenUnquotedExpansion = true
+			}
+			tokenStarted = true
 			atBoundary = false
 		}
 	}
@@ -412,6 +683,10 @@ func scan(command string) ([]item, bool) {
 	}
 	flush()
 	return items, true
+}
+
+func isExpansionRune(value rune) bool {
+	return strings.ContainsRune("{}*?[", value)
 }
 
 func isRepeatedOperator(operator rune, next byte) bool {
@@ -427,27 +702,78 @@ func isRepeatedOperator(operator rune, next byte) bool {
 	}
 }
 
-func destructiveRM(args []string) bool {
-	recursive := false
-	force := false
+//nolint:gocyclo // The option and target checks stay together so unknown forms fail closed.
+func classifyRM(args []string) safety.Risk {
+	parseOptions := true
 	for _, arg := range args {
-		if arg == "--" {
-			break
+		if parseOptions && arg == "--" {
+			parseOptions = false
+			continue
 		}
-		switch arg {
-		case "--recursive":
-			recursive = true
-		case "--force":
-			force = true
-		default:
-			if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") {
-				flags := strings.TrimPrefix(arg, "-")
-				recursive = recursive || strings.Contains(flags, "r") || strings.Contains(flags, "R")
-				force = force || strings.Contains(flags, "f")
+		if parseOptions && strings.HasPrefix(arg, "--") {
+			switch {
+			case arg == "--recursive":
+				return safety.R3
+			case hasExactWord(
+				arg,
+				"--dir", "--force", "--help", "--interactive", "--no-preserve-root",
+				"--one-file-system", "--preserve-root", "--verbose", "--version",
+			),
+				strings.HasPrefix(arg, "--interactive="),
+				arg == "--preserve-root=all":
+				continue
+			default:
+				return safety.R3
 			}
 		}
+		if parseOptions && strings.HasPrefix(arg, "-") && arg != "-" {
+			for _, flag := range strings.TrimPrefix(arg, "-") {
+				if flag == 'r' || flag == 'R' {
+					return safety.R3
+				}
+				if !strings.ContainsRune("dfiIv", flag) {
+					return safety.R3
+				}
+			}
+			continue
+		}
+		if isSensitiveWriteTarget(arg) {
+			return safety.R3
+		}
 	}
-	return recursive && force
+	return safety.R2
+}
+
+func isShellAssignment(value string) bool {
+	equals := strings.IndexByte(value, '=')
+	if equals <= 0 {
+		return false
+	}
+	name := strings.TrimSuffix(value[:equals], "+")
+	if name == "" {
+		return false
+	}
+	for i, r := range name {
+		if i == 0 {
+			if r != '_' && !unicode.IsLetter(r) {
+				return false
+			}
+			continue
+		}
+		if r != '_' && !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func hasUnquotedExpansion(parts []item) bool {
+	for _, part := range parts {
+		if part.unquotedExpansion {
+			return true
+		}
+	}
+	return false
 }
 
 func commandName(value string) string {
@@ -461,12 +787,14 @@ func isSystemPath(value string) bool {
 	for strings.HasPrefix(cleaned, "../") {
 		cleaned = strings.TrimPrefix(cleaned, "../")
 	}
-	for _, prefix := range []string{"/boot", "/dev", "/etc", "/proc", "/root", "/sbin", "/sys", "/usr", "boot", "dev", "etc", "proc", "root", "sbin", "sys", "usr"} {
-		if cleaned == prefix || strings.HasPrefix(cleaned, prefix+"/") {
-			return true
-		}
+	if cleaned == "/" {
+		return true
 	}
-	return strings.HasPrefix(cleaned, "/dev/tcp/") || strings.HasPrefix(cleaned, "/dev/udp/")
+	first := strings.SplitN(strings.TrimPrefix(cleaned, "/"), "/", 2)[0]
+	if strings.HasPrefix(first, "lib") {
+		return true
+	}
+	return hasExactWord(first, "bin", "boot", "dev", "etc", "proc", "root", "run", "sbin", "sys", "usr", "var")
 }
 
 func isSensitiveWriteTarget(value string) bool {
@@ -573,6 +901,15 @@ func hasAnyWord(words []string, candidates ...string) bool {
 			if lower == candidate {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func hasExactWord(word string, candidates ...string) bool {
+	for _, candidate := range candidates {
+		if word == candidate {
+			return true
 		}
 	}
 	return false

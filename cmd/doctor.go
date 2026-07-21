@@ -5,8 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/credstore"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/credstore"
 
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 	"github.com/JiangHe12/srvgov-cli/internal/sshexec"
@@ -111,6 +111,5 @@ func printDoctorReport(f *cliFlags, report DoctorReport) error {
 	for _, check := range report.Checks {
 		rows = append(rows, []string{check.Name, check.Status, check.Message})
 	}
-	p.Table([]string{"CHECK", "STATUS", "MESSAGE"}, rows)
-	return nil
+	return p.Table([]string{"CHECK", "STATUS", "MESSAGE"}, rows)
 }

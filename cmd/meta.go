@@ -49,11 +49,14 @@ func newVersionCmd(f *cliFlags) *cobra.Command {
 				return p.JSONData("VersionInfo", info)
 			}
 			if f.Output == "plain" {
-				_, _ = fmt.Fprintln(p.Out, info.Version)
-				return nil
+				return p.Info(info.Version)
 			}
-			_, _ = fmt.Fprintf(p.Out, "srvgov-cli %s (commit: %s, built: %s)\n", info.Version, info.Commit, info.Built)
-			return nil
+			return p.Info(fmt.Sprintf(
+				"srvgov-cli %s (commit: %s, built: %s)",
+				info.Version,
+				info.Commit,
+				info.Built,
+			))
 		},
 	}
 }
@@ -69,12 +72,14 @@ type CapTool struct {
 }
 
 type CapSupported struct {
-	ContextAPIVersions []string      `json:"contextApiVersions"`
-	AuditAPIVersions   []string      `json:"auditApiVersions"`
-	RiskModel          []CapRisk     `json:"riskModel"`
-	AllowFlags         []string      `json:"allowFlags"`
-	Governance         CapGovernance `json:"governance"`
-	Commands           []string      `json:"commands"`
+	ContextAPIVersions       []string      `json:"contextApiVersions"`
+	AuditAPIVersions         []string      `json:"auditApiVersions"`
+	MutationAuditAPIVersions []string      `json:"mutationAuditApiVersions"`
+	ErrorCodes               []string      `json:"errorCodes"`
+	RiskModel                []CapRisk     `json:"riskModel"`
+	AllowFlags               []string      `json:"allowFlags"`
+	Governance               CapGovernance `json:"governance"`
+	Commands                 []string      `json:"commands"`
 }
 
 type CapRisk struct {
@@ -95,22 +100,30 @@ func capabilitiesData() CapabilitiesData {
 	return CapabilitiesData{
 		Tool: CapTool{Name: "srvgov", Version: version},
 		Supported: CapSupported{
-			ContextAPIVersions: []string{"srvgov-cli.io/context/v1"},
-			AuditAPIVersions:   []string{"srvgov-cli.io/audit/v1"},
+			ContextAPIVersions:       []string{"srvgov-cli.io/context/v1"},
+			AuditAPIVersions:         []string{"opskit-core.io/audit/v2", "srvgov-cli.io/audit/v1"},
+			MutationAuditAPIVersions: []string{mutationAuditAPIVersion},
+			ErrorCodes:               []string{string(codeAuditIncomplete)},
 			RiskModel: []CapRisk{
 				{Level: "R0", Authorization: "free"},
 				{Level: "R1", Authorization: "--reason plus --yes or interactive confirmation"},
 				{Level: "R2", Authorization: "--reason plus --yes plus --ticket"},
-				{Level: "R3", Authorization: "--reason plus --yes plus --ticket plus --allow-destructive"},
+				{Level: "R3", Authorization: "--yes plus --ticket plus the operation-specific --allow-* flag; remote changes also require --reason"},
 			},
-			AllowFlags: []string{"--allow-destructive"},
+			AllowFlags: []string{
+				"--allow-destructive",
+				"--allow-context-change",
+				"--allow-context-delete",
+				"--allow-role-change",
+				"--allow-audit-prune",
+			},
 			Governance: CapGovernance{
-				Audit:     "append-only JSONL with optional age encryption",
+				Audit:     "authenticated v2 envelopes use commit-aware mutation audit; not-committed outcomes enter a private replay spool, indeterminate appends are quarantined while already-started outcomes queue behind the marker, and confirmed checkpoint-aware prune is R3 with sibling control evidence, --confirm, --yes, a ticket, and --allow-audit-prune",
 				RBAC:      "opt-in roles reader/writer/admin",
 				DryRun:    true,
 				TOFU:      "strict SSH host-key fingerprint pinning",
-				Redaction: "command, stdout, stderr, and audit fields are redacted",
-				Fanout:    "status, ports, and logs require R0 for every target; exec, svc, file, and docker authorize every target before any execution; --selector resolves targets by context labels",
+				Redaction: "audit persistence omits raw tickets, reasons, commands, targets, output, and error messages; bounded SHA-256 fingerprints and byte lengths are stored",
+				Fanout:    "status, ports, and logs require R0 for every target; exec, svc, file, and docker authorize every target and persist a batch intent before any execution; --selector resolves targets by context labels",
 			},
 			Commands: []string{
 				"ctx",
@@ -144,19 +157,22 @@ func newCapabilitiesCmd(f *cliFlags) *cobra.Command {
 			}
 			if f.Output == "plain" {
 				for _, command := range data.Supported.Commands {
-					_, _ = fmt.Fprintln(p.Out, command)
+					if err := p.Info(command); err != nil {
+						return err
+					}
 				}
 				return nil
 			}
 			rows := [][]string{
 				{"contextApiVersions", strings.Join(data.Supported.ContextAPIVersions, ", ")},
 				{"auditApiVersions", strings.Join(data.Supported.AuditAPIVersions, ", ")},
-				{"authorization", "R1 requires --reason/--yes; R2 adds --ticket; R3 adds --allow-destructive"},
+				{"mutationAuditApiVersions", strings.Join(data.Supported.MutationAuditAPIVersions, ", ")},
+				{"errorCodes", strings.Join(data.Supported.ErrorCodes, ", ")},
+				{"authorization", "R1 requires --reason/--yes; R2 adds --ticket; R3 requires an operation-specific --allow-*"},
 				{"governance", "audit, RBAC, dry-run, strict TOFU, redaction, authorize-all governed fanout"},
 				{"commands", "ctx, exec, status, ports, logs, svc, file, docker, audit, doctor, version, capabilities, install"},
 			}
-			p.Table([]string{"KEY", "VALUE"}, rows)
-			return nil
+			return p.Table([]string{"KEY", "VALUE"}, rows)
 		},
 	}
 }

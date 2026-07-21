@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
 
 	"github.com/JiangHe12/srvgov-cli/internal/sshexec"
 )
@@ -83,7 +83,7 @@ func TestMissingReasonAuditFailureWarnsWithoutReplacingUsageError(t *testing.T) 
 	}
 }
 
-func TestFileWriteAuditFailureWarnsWithoutChangingSuccess(t *testing.T) {
+func TestFileWriteAuditIntentFailureBlocksMutation(t *testing.T) {
 	configPath := prepareExecContext(t, false)
 	blockDefaultAuditPath(t, filepath.Dir(configPath))
 	runner := &scriptedStdinSSHRunner{}
@@ -95,11 +95,12 @@ func TestFileWriteAuditFailureWarnsWithoutChangingSuccess(t *testing.T) {
 		"file", "write", "/tmp/app.txt", "--content", "hello",
 		"--reason", "update reviewed file",
 	)
-	if err != nil {
-		t.Fatalf("file write error = %v", err)
+	assertAppError(t, err, apperrors.CodeLocalIOError, 6)
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want 0", runner.calls)
 	}
-	if !strings.Contains(stderr, auditWarningText) {
-		t.Fatalf("stderr = %q, want audit warning", stderr)
+	if strings.Contains(stderr, auditWarningText) {
+		t.Fatalf("stderr = %q, mutation audit failure must be returned, not downgraded to a warning", stderr)
 	}
 }
 

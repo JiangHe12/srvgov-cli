@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/JiangHe12/opskit-core/redact"
+	"github.com/JiangHe12/opskit-core/v2/redact"
 )
 
 // LogOptions controls journal or file observation.

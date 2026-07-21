@@ -25,17 +25,42 @@ audit event.
 Protected contexts raise R1 to R2 and R2 to R3. The command classifier and
 effective risk reported by srvgov are authoritative.
 
-Never auto-supply `--ticket`, `--allow-destructive`, or high-risk `--yes`.
+Context create/replace/selection/import/credential migration, context deletion,
+and role assignment/removal are always R3 control changes. They require `--ticket`,
+`--yes`, and respectively `--allow-context-change`,
+`--allow-context-delete`, or `--allow-role-change`. Existing targets use their
+pre-change policy. New targets use the persisted current context's policy; an
+empty bootstrap still requires the complete R3 authorization. Context
+selection uses the old persisted current policy; only a first selection with no
+current context uses the selected target's policy.
+
+Confirmed `audit prune` is also fixed R3. It uses the persisted current-context
+policy and requires human-supplied `--confirm`, `--yes`, `--ticket`, and exact
+`--allow-audit-prune`. Preview runs before authorization and never deletes.
+
+Never auto-supply `--ticket`, `--allow-destructive`,
+`--allow-context-change`, `--allow-context-delete`, `--allow-role-change`,
+`--allow-audit-prune`, or high-risk `--yes`.
 These values must come from the human operator. Use `exec --dry-run` to obtain
 risk and required authorization; impact must come from CLI output, never model guesses.
+
+Authorization and audit identity are derived from the local OS account plus
+hostname. The global `--operator` identity input and `SRVGOV_OPERATOR` are
+deprecated compatibility inputs and are ignored (`audit query --operator`
+remains a read filter). This boundary cannot distinguish an AI process from a
+human process under the same OS account; use a separately protected operator
+account or an external signed approval boundary when that distinction matters.
 
 ## Context Setup
 
 Create and select a context:
 
 ```bash
-srvgov ctx set prod --server ssh://deploy@example.com:22 --identity-file ~/.ssh/id_ed25519 --env production --label env=prod --label role=web --protected -o json
-srvgov ctx use prod -o json
+srvgov ctx set prod --server ssh://deploy@example.com:22 \
+  --identity-file ~/.ssh/id_ed25519 --env production \
+  --label env=prod --label role=web --protected \
+  --ticket OPS-123 --yes --allow-context-change -o json
+srvgov ctx use prod --ticket OPS-123 --yes --allow-context-change -o json
 srvgov ctx current -o json
 ```
 
@@ -43,7 +68,8 @@ Inspect or delete contexts:
 
 ```bash
 srvgov ctx list -o json
-srvgov ctx delete old-host -o json
+srvgov ctx delete old-host \
+  --ticket OPS-123 --yes --allow-context-delete -o json
 ```
 
 Portable contexts and local RBAC:
@@ -52,23 +78,39 @@ Use `ctx role`, `ctx export`, `ctx import`, and `ctx migrate-credentials` for
 local governance operations.
 
 ```bash
-srvgov ctx role set prod --target-operator alice --role writer -o json
+srvgov ctx role set prod --target-operator 'alice@ops-host' --role writer \
+  --ticket OPS-123 --yes --allow-role-change -o json
 srvgov ctx role list prod -o json
-srvgov ctx role unset prod --target-operator alice -o json
+srvgov ctx role unset prod --target-operator 'alice@ops-host' \
+  --ticket OPS-123 --yes --allow-role-change -o json
 srvgov ctx export prod > prod.ctx.yaml
-srvgov ctx import -f prod.ctx.yaml --rename prod-copy --yes -o json
-srvgov ctx migrate-credentials --to encrypted-file --context prod -o json
+srvgov ctx import -f prod.ctx.yaml --rename prod-copy \
+  --ticket OPS-123 --yes --allow-context-change -o json
+srvgov ctx migrate-credentials --to encrypted-file --context prod \
+  --ticket OPS-123 --yes --allow-context-change -o json
 ```
 
-`ctx export` redacts literal password and SSH identity passphrase by default.
-Credstore references are preserved. `--include-credentials` is only for
-plain-yaml contexts and must not be used unless the human operator asks for it.
+Role keys must exactly match the trusted `OS-user@hostname` identity shown in
+audit events. Older free-form role keys require human-reviewed migration; a
+non-matching role cannot authorize its own repair.
+
+`ctx export` never emits a literal password or SSH identity passphrase.
+Credstore references are preserved, and `--include-credentials` is disabled.
+`ctx import` accepts only redacted credentials or existing credstore
+references.
 
 Context labels are non-secret metadata. A `ctx set` call replaces that
 context's label set with the `--label key=value` flags supplied in the call.
 
-Passwords and private-key passphrases may be stored through the configured
-credential backend. Do not place credentials in command text.
+Literal passwords and private-key passphrases require `keychain` or
+`encrypted-file`; `ctx set` stores them there and persists only credstore
+references. Legacy inline credentials remain readable for migration
+compatibility and should be moved with `ctx migrate-credentials`. Do not place
+credentials in remote command text.
+
+Legacy `srvgov.io/context/v1` files are translated in memory for reads. Reads
+do not rewrite them; the next human-authorized context mutation upgrades the
+file atomically to the current format.
 
 ## Observe Before Acting
 
@@ -108,15 +150,21 @@ srvgov docker restart api --targets web-a,web-b,web-c --dry-run -o json
 labels. `--targets`, `--selector`, and `--context` cannot be combined.
 `status`, `ports`, and `logs` have a hard effective-risk ceiling of R0,
 including fallback commands. Multi-target `exec`, `svc`, `file`, and `docker`
-first authorize every target
-non-interactively and start no SSH work unless all targets pass. Human-supplied
+authorize every target non-interactively before mutation. Human-supplied
 reason, ticket, confirmation, and allow flags are reused but validated
 independently against every context's effective risk, ticket pattern, and
 RBAC. Never synthesize those values. Use each command's `--dry-run` to inspect
 the resolved target set, every target's effective risk, and
-`maxEffectiveRiskTier`; dry-run does not authorize, connect, or audit. Results
-are target-sorted, remote failures are isolated, and each target is audited
-separately.
+`maxEffectiveRiskTier`. Dry-run never authorizes or mutates. To prevent
+symlink-based risk under-reporting, `file write --dry-run` connects only for
+audited R0 metadata probes that bind each canonical parent directory; other
+dry-runs do not connect or audit. Results are target-sorted and remote failures
+are isolated.
+
+Remote stdout and stderr are bounded. If a mutation completes but captured
+output exceeds the bound, the command returns `PARTIAL_FAILURE`; a transport
+failure after dispatch is an uncertain result. Verify target state before any
+retry rather than assuming the mutation did not happen.
 
 ## Service Control
 
@@ -160,10 +208,13 @@ srvgov file write /tmp/app.conf --content "enabled=true" --targets web-a,web-b \
 
 Ordinary writes are R2. Sensitive paths or protected contexts raise them to R3
 and require human-supplied `--allow-destructive`. Never synthesize reason,
-ticket, confirmation, or allow flags. Without `--content`, stdin is streamed as
-file content and explicit `--yes` is mandatory; with `--content`, stdin is
-never read. Writes are non-atomic in this release. Audit stores only path,
-bytes written, and SHA-256, never content. The command does not use SFTP.
+ticket, confirmation, or allow flags. Without `--content`, stdin is read only
+after authorization and explicit `--yes` is mandatory; with `--content`, stdin
+is never read. Both forms are bounded by `--max-bytes` (1 MiB by default,
+16 MiB hard maximum). The target verifies exact length and SHA-256 before a
+same-directory atomic rename; symlinks and non-regular targets are rejected.
+Audit stores only a path fingerprint, byte count, and content SHA-256, never
+the raw path or content. The command does not use SFTP.
 
 ## Docker Governance
 
@@ -186,12 +237,17 @@ srvgov docker restart api \
   --reason "restart after reviewed deployment" --ticket OPS-123 --yes -o json
 srvgov docker restart api --targets web-a,web-b \
   --reason "restart after reviewed deployment" --ticket OPS-123 --yes -o json
+srvgov docker rm retired-api \
+  --reason "remove retired container" --ticket OPS-123 --allow-destructive --yes -o json
 ```
 
-They are R2, or R3 in protected contexts. Never synthesize `--ticket`, `--yes`,
-or `--allow-destructive`. The Docker verb does not expose run, create, exec,
-build, copy, compose, or prune. Use `exec --dry-run` if a human explicitly
-requests an operation outside the fixed Docker surface.
+`start`, `stop`, and `restart` are R2, or R3 in protected contexts. `rm` is
+destructive R3 in every context and always requires a human-supplied
+`--allow-destructive` in addition to the ticket, reason, and confirmation.
+Never synthesize `--ticket`, `--yes`, or `--allow-destructive`. The Docker verb
+does not expose run, create, exec, build, copy, compose, or prune. Use
+`exec --dry-run` if a human explicitly requests an operation outside the fixed
+Docker surface.
 
 ## Preview Before Execution
 
@@ -203,8 +259,8 @@ srvgov exec --dry-run "touch /tmp/deploy-ready" -o json
 srvgov exec --dry-run "rm -rf /tmp/old-release" -o json
 ```
 
-Dry-run classifies only. It does not connect to SSH, execute the command, or
-create an execution audit event.
+The `exec` dry-run classifies only. It does not connect to SSH, execute the
+command, or create an execution audit event.
 
 ## Execute
 
@@ -247,10 +303,37 @@ srvgov audit query --limit 50 -o json
 srvgov audit query --type authorization.denied --status denied -o json
 srvgov audit verify -o json
 srvgov audit prune --keep-last 20 -o json
+srvgov audit prune --keep-last 20 --confirm --ticket OPS-123 --allow-audit-prune --yes -o json
 srvgov doctor -o json
 srvgov version -o json
 ```
 
-Audit query output is redacted again before being returned. SSH host keys are
-pinned by strict trust on first use. A changed key or a new key type for an
-already known host is rejected and requires manual pin review.
+Audit query output is redacted again before being returned. For encrypted
+audit logs, set `SRVGOV_AUDIT_PRIVATE_KEY` before `audit query` or `audit
+verify`; the key is read from the environment and never echoed. SSH host keys
+are pinned by strict trust on first use. The first pin is reported on stderr
+with the address, key type, and fingerprint so JSON stdout remains clean. A
+changed key or a new key type for an already known host is rejected and
+requires manual pin review.
+Confirmed pruning is checkpoint-aware. The full previewed rotation set is
+rebound under the audit lock, and the authenticated v2 checkpoint is durably
+advanced before selected rotations are deleted. Any candidate drift or
+integrity problem fails closed before deletion. Prune intent/outcome evidence
+uses the same-directory sibling `.<audit-base>-control`; it never writes into
+the prune target or its rotation namespace.
+
+Every mutation records an `intent` after final validation and authorization but
+before its first side effect, then an `outcome` with the same `mutationId`.
+Fanout records a batch pair plus one pair per target. Raw tickets, reasons,
+commands, targets, file paths, output, file content, and backend error text are
+not persisted; audit records contain domain-separated fingerprints and lengths.
+
+Audit records use authenticated v2 envelopes and report their durable commit
+state. A known-not-committed intent blocks the mutation. A known-not-committed
+outcome enters a private durable spool and returns `AUDIT_INCOMPLETE`; a known
+committed outcome is never queued again. An indeterminate append is atomically
+renamed to `.indeterminate`, blocks subsequent automatic replay, and requires
+manual reconciliation. A mutation that already started still queues its own
+outcome after that marker without making another audit append. Crash recovery
+can still be at-least-once, so audit consumers deduplicate by
+`(mutationId, phase)`.

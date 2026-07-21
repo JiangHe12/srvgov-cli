@@ -9,8 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	corectx "github.com/JiangHe12/opskit-core/v2/ctx"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
 	"github.com/JiangHe12/srvgov-cli/internal/cmdclass"
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
@@ -291,8 +292,9 @@ func TestExecFanoutRequiresTicketToMatchEveryTarget(t *testing.T) {
 }
 
 func TestExecFanoutRequiresRBACOnEveryTarget(t *testing.T) {
+	operator := mustTrustedOperator(t)
 	configPath := prepareFanoutContextsWith(t, []fanoutContextSpec{
-		{Name: "alpha", Roles: map[string]string{"alice": "writer"}},
+		{Name: "alpha", Roles: map[string]string{operator: "writer"}},
 		{Name: "bravo", Roles: map[string]string{"bob": "writer"}},
 	})
 	runner := &targetSSHRunner{}
@@ -300,7 +302,7 @@ func TestExecFanoutRequiresRBACOnEveryTarget(t *testing.T) {
 	t.Cleanup(restore)
 
 	_, err := executeRoot(t, configPath,
-		"--operator", "alice", "--yes", "--ticket", "OPS-42",
+		"--operator", "bob", "--yes", "--ticket", "OPS-42",
 		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
 		"systemctl restart nginx",
 	)
@@ -392,13 +394,118 @@ func TestExecFanoutExecutesAllAuthorizedR2TargetsAndAuditsOwnRisk(t *testing.T) 
 		t.Fatalf("execution output added dry-run field: %s", output)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 2 {
+	if len(events) != 6 {
 		t.Fatalf("audit events = %#v", events)
 	}
-	for _, event := range events {
-		if event.RiskTier != "R2" || event.EventType != srvgovaudit.EventTypeExecRun {
-			t.Fatalf("audit event = %#v", event)
-		}
+	_, batchOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeExecRun)+".batch", "fanout", "R2")
+	_, alphaOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeExecRun), "alpha", "R2")
+	_, bravoOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeExecRun), "bravo", "R2")
+	if batchOutcome.Outcome.Succeeded != 2 ||
+		alphaOutcome.Outcome.Succeeded != 1 ||
+		bravoOutcome.Outcome.Succeeded != 1 {
+		t.Fatalf("mutation outcomes = %#v / %#v / %#v", batchOutcome, alphaOutcome, bravoOutcome)
+	}
+}
+
+func TestExecMutationFanoutAggregatesUncertainTargetState(t *testing.T) {
+	configPath := prepareFanoutContexts(t)
+	runner := &targetSSHRunner{
+		results: map[string]sshexec.Result{
+			"bravo\x00systemctl restart nginx": {},
+		},
+		errors: map[string]error{
+			"alpha\x00systemctl restart nginx": context.DeadlineExceeded,
+		},
+	}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	output, err := executeRoot(t, configPath,
+		"-o", "json", "--yes", "--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
+		"systemctl restart nginx",
+	)
+	assertAppError(t, err, apperrors.CodePartialFailure, 11)
+	appErr := apperrors.AsAppError(err)
+	if !strings.Contains(appErr.Suggestion, "verify") || !strings.Contains(appErr.Suggestion, "before any retry") {
+		t.Fatalf("suggestion = %q, want verify-before-retry guidance", appErr.Suggestion)
+	}
+	got := decodeJSONData[fanoutView](t, output, "FanoutResult")
+	if got.Summary.Succeeded != 1 ||
+		got.Summary.Failed != 0 ||
+		got.Summary.Uncertain != 1 ||
+		got.Summary.OutputIncomplete != 0 {
+		t.Fatalf("summary = %#v", got.Summary)
+	}
+	if got.Results[0].Error == nil || got.Results[0].Error.Code != string(apperrors.CodePartialFailure) {
+		t.Fatalf("uncertain result = %#v", got.Results[0])
+	}
+
+	events := readAuditEvents(t)
+	if len(events) != 6 {
+		t.Fatalf("audit events = %#v", events)
+	}
+	_, batchOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeExecRun)+".batch", "fanout", "R2")
+	_, alphaOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeExecRun), "alpha", "R2")
+	_, bravoOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeExecRun), "bravo", "R2")
+	if batchOutcome.Status != srvgovaudit.StatusFailed ||
+		batchOutcome.Outcome.ErrorCode != string(apperrors.CodePartialFailure) ||
+		batchOutcome.Outcome.Succeeded != 1 ||
+		batchOutcome.Outcome.Failed != 0 ||
+		batchOutcome.Outcome.Uncertain != 1 ||
+		alphaOutcome.Outcome.Uncertain != 1 ||
+		bravoOutcome.Outcome.Succeeded != 1 {
+		t.Fatalf("mutation outcomes = %#v / %#v / %#v", batchOutcome, alphaOutcome, bravoOutcome)
+	}
+}
+
+func TestExecMutationFanoutKeepsSuccessfulTruncationDistinctFromUncertain(t *testing.T) {
+	configPath := prepareFanoutContexts(t)
+	runner := &targetSSHRunner{results: map[string]sshexec.Result{
+		"alpha\x00systemctl restart nginx": {
+			Stdout:          "restart output",
+			StdoutTruncated: true,
+		},
+		"bravo\x00systemctl restart nginx": {},
+	}}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	output, err := executeRoot(t, configPath,
+		"-o", "json", "--yes", "--ticket", "OPS-42",
+		"exec", "--targets", "alpha,bravo", "--reason", "restart reviewed service",
+		"systemctl restart nginx",
+	)
+	assertAppError(t, err, apperrors.CodePartialFailure, 11)
+	appErr := apperrors.AsAppError(err)
+	if !strings.Contains(appErr.Suggestion, "already ran") || !strings.Contains(appErr.Suggestion, "before any retry") {
+		t.Fatalf("suggestion = %q, want no-blind-retry guidance", appErr.Suggestion)
+	}
+	got := decodeJSONData[fanoutView](t, output, "FanoutResult")
+	if got.Summary.Succeeded != 2 ||
+		got.Summary.Failed != 0 ||
+		got.Summary.Uncertain != 0 ||
+		got.Summary.OutputIncomplete != 1 {
+		t.Fatalf("summary = %#v", got.Summary)
+	}
+	if got.Results[0].Error == nil || got.Results[0].Error.Code != string(apperrors.CodePartialFailure) {
+		t.Fatalf("output-incomplete result = %#v", got.Results[0])
+	}
+
+	events := readAuditEvents(t)
+	if len(events) != 6 {
+		t.Fatalf("audit events = %#v", events)
+	}
+	_, batchOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeExecRun)+".batch", "fanout", "R2")
+	_, alphaOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeExecRun), "alpha", "R2")
+	if batchOutcome.Status != srvgovaudit.StatusSucceeded ||
+		batchOutcome.Outcome.Succeeded != 2 ||
+		batchOutcome.Outcome.Failed != 0 ||
+		batchOutcome.Outcome.Uncertain != 0 ||
+		!batchOutcome.Outcome.OutputIncomplete ||
+		alphaOutcome.Outcome.Succeeded != 1 ||
+		!alphaOutcome.Outcome.OutputIncomplete {
+		t.Fatalf("mutation outcomes = %#v / %#v", batchOutcome, alphaOutcome)
 	}
 }
 
@@ -524,7 +631,9 @@ func TestExecFanoutSortsDeduplicatesRedactsAndAuditsEachTarget(t *testing.T) {
 		t.Fatalf("output leaked secret: %s", output)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 2 || events[0].Target.Host == events[1].Target.Host {
+	if len(events) != 2 ||
+		events[0].Target.Fingerprint == "" ||
+		events[0].Target.Fingerprint == events[1].Target.Fingerprint {
 		t.Fatalf("audit events = %#v, want one event per target", events)
 	}
 }
@@ -709,51 +818,32 @@ type fanoutContextSpec struct {
 
 func prepareFanoutContextsWith(t *testing.T, specs []fanoutContextSpec) string {
 	t.Helper()
+	stubFileWriteTargetResolution(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	configPath := filepath.Join(home, "config.yaml")
+	srvgovctx.SetConfigPath(configPath)
 	for _, spec := range specs {
-		args := []string{
-			"ctx", "set", spec.Name,
-			"--server", "ssh://alice@" + spec.Name + ".example:22",
+		item := srvgovctx.Context{
+			Host: spec.Name + ".example",
+			Port: 22,
+			Base: corectx.Base{
+				Protected:     spec.Protected,
+				TicketPattern: spec.TicketPattern,
+				Roles:         cloneRoles(spec.Roles),
+				Username:      "alice",
+			},
+			Labels: cloneLabels(spec.Labels),
 		}
-		if spec.Protected {
-			args = append(args, "--protected")
-		}
-		if spec.TicketPattern != "" {
-			args = append(args, "--ticket-pattern", spec.TicketPattern)
-		}
-		for _, label := range sortedLabelFlags(spec.Labels) {
-			args = append(args, "--label", label)
-		}
-		runCommand(t, configPath, args...)
-		for operator, role := range spec.Roles {
-			runCommand(t, configPath,
-				"ctx", "role", "set", spec.Name,
-				"--target-operator", operator,
-				"--role", role,
-			)
+		if err := srvgovctx.SetContext(spec.Name, item); err != nil {
+			t.Fatalf("SetContext(%q) error = %v", spec.Name, err)
 		}
 	}
 	if len(specs) > 0 {
-		runCommand(t, configPath, "ctx", "use", specs[0].Name)
+		if err := srvgovctx.UseContext(specs[0].Name); err != nil {
+			t.Fatalf("UseContext(%q) error = %v", specs[0].Name, err)
+		}
 	}
 	return configPath
-}
-
-func sortedLabelFlags(labels map[string]string) []string {
-	if len(labels) == 0 {
-		return nil
-	}
-	keys := make([]string, 0, len(labels))
-	for key := range labels {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	out := make([]string, 0, len(keys))
-	for _, key := range keys {
-		out = append(out, key+"="+labels[key])
-	}
-	return out
 }

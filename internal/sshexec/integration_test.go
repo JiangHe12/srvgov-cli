@@ -17,8 +17,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	corectx "github.com/JiangHe12/opskit-core/ctx"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	corectx "github.com/JiangHe12/opskit-core/v2/ctx"
 
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"

@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/credstore"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/credstore"
 
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
@@ -43,6 +46,14 @@ type contextImportResult struct {
 	CredentialReferences bool   `json:"credentialReferences"`
 }
 
+type preparedContextImport struct {
+	name               string
+	item               srvgovctx.Context
+	passwordRedacted   bool
+	passphraseRedacted bool
+	referenced         bool
+}
+
 func ctxExportCmd(f *cliFlags) *cobra.Command {
 	var opts ctxExportOptions
 	command := &cobra.Command{
@@ -53,7 +64,7 @@ func ctxExportCmd(f *cliFlags) *cobra.Command {
 			return runCtxExport(f, args[0], opts)
 		},
 	}
-	command.Flags().BoolVar(&opts.includeCredentials, "include-credentials", false, "Include plaintext credentials when stored as plain-yaml")
+	command.Flags().BoolVar(&opts.includeCredentials, "include-credentials", false, "Deprecated; plaintext credential export is disabled")
 	return command
 }
 
@@ -62,11 +73,11 @@ func ctxImportCmd(f *cliFlags) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "import -f <file>",
 		Short: "Import a portable context document",
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 0 {
 				return apperrors.New(apperrors.CodeUsageError, "ctx import accepts no positional arguments", nil)
 			}
-			return runCtxImport(f, opts)
+			return runCtxImport(cmd, f, opts)
 		},
 	}
 	command.Flags().StringVarP(&opts.file, "file", "f", "", "Portable context document to import")
@@ -107,72 +118,143 @@ func runCtxExport(f *cliFlags, name string, opts ctxExportOptions) error {
 }
 
 func prepareContextForExport(item *srvgovctx.Context, includeCredentials bool) error {
-	if includeCredentials && item.CredentialBackend != "" && item.CredentialBackend != "plain-yaml" {
-		if isLiteralCredential(item.Password) || isLiteralCredential(item.IdentityPassphrase) {
-			return apperrors.New(apperrors.CodeCredentialStoreError, "cannot export plaintext credentials from secure backend; migrate to plain-yaml first or share out-of-band", nil)
-		}
+	if includeCredentials {
+		return apperrors.New(
+			apperrors.CodeUsageError,
+			"--include-credentials is disabled; migrate legacy credentials to keychain or encrypted-file and share them out-of-band",
+			nil,
+		)
 	}
-	if !includeCredentials {
-		if isLiteralCredential(item.Password) {
-			item.Password = redactedCredential
-		}
-		if isLiteralCredential(item.IdentityPassphrase) {
-			item.IdentityPassphrase = redactedCredential
-		}
+	if isLiteralCredential(item.Password) {
+		item.Password = redactedCredential
+	}
+	if isLiteralCredential(item.IdentityPassphrase) {
+		item.IdentityPassphrase = redactedCredential
 	}
 	return nil
 }
 
-func runCtxImport(f *cliFlags, opts ctxImportOptions) error {
-	if f.NonInteractive && !f.Yes {
-		return apperrors.New(apperrors.CodeAuthorizationRequired, "ctx import requires --yes in non-interactive mode", nil)
-	}
-	if opts.file == "" {
-		return apperrors.New(apperrors.CodeUsageError, "-f/--file is required", nil)
-	}
-	doc, err := readContextExportDocument(opts.file)
+func runCtxImport(cmd *cobra.Command, f *cliFlags, opts ctxImportOptions) error {
+	prepared, err := prepareContextImport(opts)
 	if err != nil {
 		return err
 	}
-	name, err := contextImportName(doc.Name, opts.rename)
-	if err != nil {
+	var auditHandle *mutationAuditHandle
+	updateErr := srvgovctx.Update(func(cfg *srvgovctx.Config) error {
+		if _, exists := cfg.Contexts[prepared.name]; exists && !opts.force {
+			return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("context %q already exists; use --force to overwrite", prepared.name), nil)
+		}
+		prePolicy, policyErr := contextPreChangePolicy(cfg, prepared.name)
+		if policyErr != nil {
+			return policyErr
+		}
+		if authErr := authorizeControlChange(
+			cmd,
+			f,
+			prePolicy,
+			prepared.name,
+			"context.import",
+			allowContextChange,
+			f.AllowCtxChange,
+		); authErr != nil {
+			return authErr
+		}
+		auditHandle, policyErr = beginControlMutationAudit(
+			f,
+			"context.import",
+			prepared.name,
+			prepared.name,
+			prepared.item,
+			prePolicy,
+		)
+		if policyErr != nil {
+			return policyErr
+		}
+		cfg.Contexts[prepared.name] = prepared.item
+		return nil
+	})
+	if err := finishControlMutationAudit(auditHandle, updateErr); err != nil {
 		return err
 	}
-	passwordRedacted := doc.Context.Password == redactedCredential
-	passphraseRedacted := doc.Context.IdentityPassphrase == redactedCredential
-	if passwordRedacted {
-		doc.Context.Password = ""
-	}
-	if passphraseRedacted {
-		doc.Context.IdentityPassphrase = ""
-	}
-	referenced := applyCredentialBackendFromRefs(&doc.Context)
-	cfg, err := srvgovctx.Load()
-	if err != nil {
-		return err
-	}
-	if _, exists := cfg.Contexts[name]; exists && !opts.force {
-		return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("context %q already exists; use --force to overwrite", name), nil)
-	}
-	if err := srvgovctx.SetContext(name, doc.Context); err != nil {
-		return err
-	}
-	emitAudit(f, contextAuditEvent(f, srvgovaudit.EventTypeContextImport, name, doc.Context), nil)
 	result := contextImportResult{
-		Name:                 name,
-		PasswordRedacted:     passwordRedacted,
-		PassphraseRedacted:   passphraseRedacted,
-		CredentialReferences: referenced,
+		Name:                 prepared.name,
+		PasswordRedacted:     prepared.passwordRedacted,
+		PassphraseRedacted:   prepared.passphraseRedacted,
+		CredentialReferences: prepared.referenced,
 	}
 	p := newPrinter(f)
 	if f.Output == "json" {
 		return p.JSONData("ContextImportResult", result)
 	}
-	p.Success(fmt.Sprintf("context %q imported", name))
-	if passwordRedacted || passphraseRedacted {
-		p.Warn(fmt.Sprintf("credentials are redacted; run: srvgov ctx set %s --password=... --identity-passphrase=...", name))
+	if err := p.Success(fmt.Sprintf("context %q imported", prepared.name)); err != nil {
+		return err
+	}
+	if prepared.passwordRedacted || prepared.passphraseRedacted {
+		return p.Warn(fmt.Sprintf(
+			"credentials are redacted; run: srvgov ctx set %s --credential-backend encrypted-file --password=... --identity-passphrase=...",
+			prepared.name,
+		))
 	}
 	return nil
+}
+
+func prepareContextImport(opts ctxImportOptions) (preparedContextImport, error) {
+	if opts.file == "" {
+		return preparedContextImport{}, apperrors.New(apperrors.CodeUsageError, "-f/--file is required", nil)
+	}
+	doc, err := readContextExportDocument(opts.file)
+	if err != nil {
+		return preparedContextImport{}, err
+	}
+	name, err := contextImportName(doc.Name, opts.rename)
+	if err != nil {
+		return preparedContextImport{}, err
+	}
+	prepared := preparedContextImport{
+		name:               name,
+		item:               doc.Context,
+		passwordRedacted:   doc.Context.Password == redactedCredential,
+		passphraseRedacted: doc.Context.IdentityPassphrase == redactedCredential,
+	}
+	if prepared.passwordRedacted {
+		prepared.item.Password = ""
+	}
+	if prepared.passphraseRedacted {
+		prepared.item.IdentityPassphrase = ""
+	}
+	if isLiteralCredential(prepared.item.Password) || isLiteralCredential(prepared.item.IdentityPassphrase) {
+		return preparedContextImport{}, apperrors.New(
+			apperrors.CodeUsageError,
+			"context import accepts only redacted credentials or credstore references; store credentials with ctx set after import",
+			nil,
+		)
+	}
+	referenceBackend, err := contextCredentialReferenceBackend(
+		prepared.item.Password,
+		prepared.item.IdentityPassphrase,
+	)
+	if err != nil {
+		return preparedContextImport{}, err
+	}
+	if referenceBackend != "" {
+		if credstore.IsPlaintextBackend(prepared.item.CredentialBackend) {
+			prepared.item.CredentialBackend = referenceBackend
+		} else if prepared.item.CredentialBackend != referenceBackend {
+			return preparedContextImport{}, apperrors.New(
+				apperrors.CodeUsageError,
+				"credential references must match context credentialBackend",
+				nil,
+			)
+		}
+		prepared.referenced = true
+	}
+	if err := prepared.item.Normalize(); err != nil {
+		return preparedContextImport{}, err
+	}
+	if err := validateRequestedRoles(prepared.item.Roles); err != nil {
+		return preparedContextImport{}, err
+	}
+	return prepared, nil
 }
 
 func readContextExportDocument(path string) (contextExportDocument, error) {
@@ -181,7 +263,16 @@ func readContextExportDocument(path string) (contextExportDocument, error) {
 		return contextExportDocument{}, apperrors.New(apperrors.CodeLocalIOError, "failed to read context import file", err)
 	}
 	var doc contextExportDocument
-	if err := yaml.Unmarshal(data, &doc); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&doc); err != nil {
+		return contextExportDocument{}, apperrors.New(apperrors.CodeUsageError, "failed to parse context import file", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = apperrors.New(apperrors.CodeUsageError, "multiple YAML documents are not allowed", nil)
+		}
 		return contextExportDocument{}, apperrors.New(apperrors.CodeUsageError, "failed to parse context import file", err)
 	}
 	if doc.APIVersion != ctxExportAPIVersion && doc.APIVersion != legacyCtxExportAPIVersion {
@@ -205,29 +296,23 @@ func isLiteralCredential(value string) bool {
 	return value != "" && !credstore.ParseRef(value).IsRef
 }
 
-func applyCredentialBackendFromRefs(item *srvgovctx.Context) bool {
-	for _, value := range []string{item.Password, item.IdentityPassphrase} {
-		ref := credstore.ParseRef(value)
-		if ref.IsRef {
-			item.CredentialBackend = ref.BackendName
-			return true
-		}
-	}
-	return false
-}
-
 func contextAuditEvent(f *cliFlags, eventType srvgovaudit.EventType, name string, item srvgovctx.Context) srvgovaudit.Event {
+	risk := "R0"
+	if eventType != srvgovaudit.EventTypeContextExport {
+		risk = "R3"
+	}
 	return srvgovaudit.Event{
 		EventType: eventType,
-		Operator:  resolveOperator(f.Operator),
+		Operator:  currentOperator(f),
 		Context: srvgovaudit.Context{
 			Name:      name,
 			Env:       item.Env,
 			Protected: item.Protected,
 		},
+		Ticket:   f.Ticket,
 		Target:   srvgovaudit.Target{Host: name},
 		Command:  string(eventType),
-		RiskTier: "R0",
+		RiskTier: risk,
 		Status:   srvgovaudit.StatusSucceeded,
 	}
 }

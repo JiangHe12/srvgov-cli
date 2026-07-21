@@ -34,6 +34,32 @@ A real-backend integration test (`//go:build integration`, env-gated on `SRVGOV_
 
 - R0 is free but audited. R1 needs `--reason` and `--yes`. R2 also needs a
   non-empty `--ticket`. R3 also needs `--allow-destructive`.
+- Context create/replace/selection/import/credential migration, context
+  deletion, and role changes are always R3 and require their precise
+  `--allow-context-change`, `--allow-context-delete`, or
+  `--allow-role-change` flag.
+- Confirmed audit pruning is fixed R3 and requires the persisted
+  current-context policy, a ticket, confirmation, and exact
+  `--allow-audit-prune`. Preview precedes authorization and never deletes.
+  The full previewed rotation set is rebound under the audit lock; v2
+  checkpoint advancement must commit before authenticated rotations are
+  deleted. Intent/outcome evidence uses sibling `.<audit-base>-control`, never
+  the prune target or its rotation namespace.
+- Authorization and audit identity come from the local OS account plus
+  hostname; `--operator` and `SRVGOV_OPERATOR` are ignored.
+- Every mutation must persist an `intent` after final validation and
+  authorization but before its first side effect, then an `outcome` with the
+  same `mutationId`. Fanout also records a batch pair and a pair per target.
+- Append handling must consume opskit-core/v2 commit state. Known-not-committed
+  intent appends block the mutation; only known-not-committed outcomes enter
+  the durable replay spool. Known-committed records are never queued again.
+  Indeterminate spool replays are atomically renamed to `.indeterminate` and
+  block automatic replay pending manual reconciliation. Already-started
+  mutations still queue their outcome after the marker without another append.
+  Crash recovery remains at-least-once, so consumers deduplicate by
+  `(mutationId, phase)`.
+- Mutation audit stores fingerprints and lengths, never raw ticket, reason,
+  command, target, file path, output, file content, or backend error text.
 - Protected contexts raise R1 to R2 and R2 to R3.
 - `cmdclass` is the only command-risk source and must remain fail-closed.
 - Authorization must go through `opskit-core/safety`.

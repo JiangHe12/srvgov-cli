@@ -7,20 +7,20 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/credstore"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/credstore"
 
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
 
-func TestContextExportRedactsCredentialsAndImportRequiresYes(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	runCommand(t, configPath,
-		"ctx", "set", "dev",
-		"--server", "ssh://alice@example.com:22",
-		"--password", "login-secret",
-		"--identity-passphrase", "key-secret",
-	)
+func TestContextExportRedactsCredentialsAndImportRequiresR3Authorization(t *testing.T) {
+	configPath := isolatedContextConfig(t)
+	item := testServerContext("example.com")
+	item.Username = "alice"
+	item.Password = "login-secret"
+	item.IdentityPassphrase = "key-secret"
+	item.CredentialBackend = "plain-yaml"
+	mustSetContext(t, configPath, "dev", item)
 
 	exported := runCommand(t, configPath, "ctx", "export", "dev")
 	if strings.Contains(exported, "login-secret") || strings.Contains(exported, "key-secret") {
@@ -37,7 +37,10 @@ func TestContextExportRedactsCredentialsAndImportRequiresYes(t *testing.T) {
 	_, err := executeRoot(t, configPath, "--non-interactive", "ctx", "import", "-f", file, "--rename", "copy")
 	assertAppError(t, err, apperrors.CodeAuthorizationRequired, 8)
 
-	runCommand(t, configPath, "--non-interactive", "--yes", "-o", "json", "ctx", "import", "-f", file, "--rename", "copy")
+	runCommand(t, configPath,
+		"--non-interactive", "--yes", "--ticket", "TEST-1", "--allow-context-change", "-o", "json",
+		"ctx", "import", "-f", file, "--rename", "copy",
+	)
 	cfg, err := srvgovctx.Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -52,7 +55,10 @@ func TestContextExportRedactsCredentialsAndImportRequiresYes(t *testing.T) {
 	if err := os.WriteFile(legacyFile, []byte(legacyExport), 0o600); err != nil {
 		t.Fatalf("WriteFile(legacy) error = %v", err)
 	}
-	runCommand(t, configPath, "--non-interactive", "--yes", "ctx", "import", "-f", legacyFile, "--rename", "legacy-copy")
+	runCommand(t, configPath,
+		"--non-interactive", "--yes", "--ticket", "TEST-1", "--allow-context-change",
+		"ctx", "import", "-f", legacyFile, "--rename", "legacy-copy",
+	)
 	cfg, err = srvgovctx.Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -62,25 +68,28 @@ func TestContextExportRedactsCredentialsAndImportRequiresYes(t *testing.T) {
 	}
 }
 
-func TestContextExportCanIncludePlainYamlCredentialsAndPreservesRefs(t *testing.T) {
-	configPath := filepath.Join(t.TempDir(), "config.yaml")
-	runCommand(t, configPath,
-		"ctx", "set", "dev",
-		"--server", "ssh://alice@example.com:22",
-		"--password", "login-secret",
-		"--identity-passphrase", "credstore:encrypted-file",
-	)
+func TestContextExportDisablesPlaintextCredentialsAndPreservesRefs(t *testing.T) {
+	configPath := isolatedContextConfig(t)
+	item := testServerContext("example.com")
+	item.Username = "alice"
+	item.Password = "login-secret"
+	item.IdentityPassphrase = "credstore:encrypted-file"
+	item.CredentialBackend = "plain-yaml"
+	mustSetContext(t, configPath, "dev", item)
 
 	redacted := runCommand(t, configPath, "ctx", "export", "dev")
+	if strings.Contains(redacted, "login-secret") {
+		t.Fatalf("default export leaked literal credential:\n%s", redacted)
+	}
 	if !strings.Contains(redacted, "credstore:encrypted-file") {
 		t.Fatalf("credstore ref not preserved:\n%s", redacted)
 	}
-	included := runCommand(t, configPath, "ctx", "export", "dev", "--include-credentials")
-	if !strings.Contains(included, "login-secret") {
-		t.Fatalf("included export missing literal credential:\n%s", included)
+	included := runCommandError(t, configPath, "ctx", "export", "dev", "--include-credentials")
+	if !strings.Contains(included, "--include-credentials is disabled") {
+		t.Fatalf("include-credentials error = %q", included)
 	}
-	if !strings.Contains(included, "credstore:encrypted-file") {
-		t.Fatalf("included export missing ref:\n%s", included)
+	if strings.Contains(included, "login-secret") {
+		t.Fatalf("include-credentials error leaked literal credential: %q", included)
 	}
 }
 
@@ -90,14 +99,18 @@ func TestMigrateCredentialsMovesPasswordAndIdentityPassphrase(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("SRVGOV_MASTER_PASSWORD", "test-master-password")
 	configPath := filepath.Join(home, "config.yaml")
-	runCommand(t, configPath,
-		"ctx", "set", "dev",
-		"--server", "ssh://alice@example.com:22",
-		"--password", "login-secret",
-		"--identity-passphrase", "key-secret",
-	)
+	srvgovctx.SetConfigPath(configPath)
+	item := testServerContext("example.com")
+	item.Username = "alice"
+	item.Password = "login-secret"
+	item.IdentityPassphrase = "key-secret"
+	item.CredentialBackend = "plain-yaml"
+	mustSetContext(t, configPath, "dev", item)
 
-	output := runCommand(t, configPath, "-o", "json", "ctx", "migrate-credentials", "--to", "encrypted-file", "--context", "dev")
+	output := runCommand(t, configPath,
+		"-o", "json", "--ticket", "TEST-1", "--yes", "--allow-context-change",
+		"ctx", "migrate-credentials", "--to", "encrypted-file", "--context", "dev",
+	)
 	if strings.Contains(output, "login-secret") || strings.Contains(output, "key-secret") {
 		t.Fatalf("migration output leaked credential: %s", output)
 	}
@@ -105,9 +118,9 @@ func TestMigrateCredentialsMovesPasswordAndIdentityPassphrase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	item := cfg.Contexts["dev"]
-	if item.Password != "credstore:encrypted-file" || item.IdentityPassphrase != "credstore:encrypted-file" {
-		t.Fatalf("stored refs = password:%q passphrase:%q", item.Password, item.IdentityPassphrase)
+	migrated := cfg.Contexts["dev"]
+	if migrated.Password != "credstore:encrypted-file" || migrated.IdentityPassphrase != "credstore:encrypted-file" {
+		t.Fatalf("stored refs = password:%q passphrase:%q", migrated.Password, migrated.IdentityPassphrase)
 	}
 	backend, err := credstore.New("encrypted-file")
 	if err != nil {
@@ -123,5 +136,123 @@ func TestMigrateCredentialsMovesPasswordAndIdentityPassphrase(t *testing.T) {
 	}
 	if password != "login-secret" || passphrase != "key-secret" {
 		t.Fatalf("migrated values = %q/%q", password, passphrase)
+	}
+}
+
+func TestContextImportValidatesEntireDocumentBeforeAuthorizationOrWrite(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unknown field",
+			body: `apiVersion: srvgov-cli.io/ctx-export/v1
+name: imported
+context:
+  server: ssh://alice@example.com:22
+  unexpected: true
+`,
+		},
+		{
+			name: "multiple documents",
+			body: `apiVersion: srvgov-cli.io/ctx-export/v1
+name: imported
+context:
+  server: ssh://alice@example.com:22
+---
+apiVersion: srvgov-cli.io/ctx-export/v1
+name: second
+context:
+  server: ssh://alice@second.example.com:22
+`,
+		},
+		{
+			name: "invalid context",
+			body: `apiVersion: srvgov-cli.io/ctx-export/v1
+name: imported
+context:
+  server: mysql://db.example.com:3306
+`,
+		},
+		{
+			name: "invalid role",
+			body: `apiVersion: srvgov-cli.io/ctx-export/v1
+name: imported
+context:
+  server: ssh://alice@example.com:22
+  roles:
+    alice@ops-host: owner
+`,
+		},
+		{
+			name: "literal credential",
+			body: `apiVersion: srvgov-cli.io/ctx-export/v1
+name: imported
+context:
+  server: ssh://alice@example.com:22
+  password: import-secret
+  credentialBackend: plain-yaml
+`,
+		},
+		{
+			name: "literal credential with declared secure backend",
+			body: `apiVersion: srvgov-cli.io/ctx-export/v1
+name: imported
+context:
+  server: ssh://alice@example.com:22
+  password: import-secret
+  credentialBackend: encrypted-file
+`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configPath := isolatedContextConfig(t)
+			file := filepath.Join(t.TempDir(), "import.yaml")
+			if err := os.WriteFile(file, []byte(test.body), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+
+			_, err := executeRoot(t, configPath, "ctx", "import", "-f", file)
+			assertAppError(t, err, apperrors.CodeUsageError, 1)
+			cfg, loadErr := srvgovctx.Load()
+			if loadErr != nil {
+				t.Fatalf("Load() error = %v", loadErr)
+			}
+			if len(cfg.Contexts) != 0 {
+				t.Fatalf("contexts written from invalid import = %#v", cfg.Contexts)
+			}
+		})
+	}
+}
+
+func TestContextImportPreservesCredentialReferencesAndDerivesBackend(t *testing.T) {
+	configPath := isolatedContextConfig(t)
+	file := filepath.Join(t.TempDir(), "import.yaml")
+	body := `apiVersion: srvgov-cli.io/ctx-export/v1
+name: imported
+context:
+  server: ssh://alice@example.com:22
+  password: credstore:encrypted-file
+  identityPassphrase: credstore:encrypted-file
+`
+	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	runCommand(t, configPath,
+		"--ticket", "TEST-1", "--yes", "--allow-context-change",
+		"ctx", "import", "-f", file,
+	)
+	cfg, err := srvgovctx.Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	item := cfg.Contexts["imported"]
+	if item.Password != "credstore:encrypted-file" ||
+		item.IdentityPassphrase != "credstore:encrypted-file" ||
+		item.CredentialBackend != "encrypted-file" {
+		t.Fatalf("imported credential references = %#v", item)
 	}
 }

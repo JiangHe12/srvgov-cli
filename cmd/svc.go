@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/redact"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/redact"
 
 	"github.com/JiangHe12/srvgov-cli/internal/fanout"
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
@@ -122,6 +122,20 @@ func runServiceFanout(
 	if err := authorizeGovernedFanout(cmd, f, plans, command, reason, allow, maxEffective); err != nil {
 		return err
 	}
+	var batchAudit *mutationAuditHandle
+	if eventType == srvgovaudit.EventTypeSvcAction {
+		batchAudit, err = beginFanoutMutationAudit(
+			f,
+			targets,
+			string(eventType),
+			command,
+			reason,
+			maxEffective,
+		)
+		if err != nil {
+			return err
+		}
+	}
 	results := fanout.Run(cmd.Context(), targets, flags.Concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
 		targetFlags := *f
 		targetFlags.NonInteractive = true
@@ -130,6 +144,9 @@ func runServiceFanout(
 		}
 		return runServiceActionTarget(cmd, &targetFlags, target.Value, target.Name, action, unit, reason, allow, eventType)
 	})
+	if err := finishFanoutMutationAudit(batchAudit, results); err != nil {
+		return err
+	}
 	return printFanout(cmd, f, buildFanoutView(targets, flags.Concurrency, results))
 }
 
@@ -236,7 +253,7 @@ func printServiceStatus(f *cliFlags, value serviceStatusView) error {
 	if f.Output == "json" {
 		return p.JSONData("ServiceStatus", value)
 	}
-	p.KV([][2]string{
+	return p.KV([][2]string{
 		{"Unit", value.Unit},
 		{"Load State", value.LoadState},
 		{"Active State", value.ActiveState},
@@ -245,7 +262,6 @@ func printServiceStatus(f *cliFlags, value serviceStatusView) error {
 		{"Description", value.Description},
 		{"Main PID", strconv.Itoa(value.MainPID)},
 	})
-	return nil
 }
 
 func printServiceAction(f *cliFlags, value serviceActionView) error {
@@ -253,12 +269,11 @@ func printServiceAction(f *cliFlags, value serviceActionView) error {
 	if f.Output == "json" {
 		return p.JSONData("ServiceAction", value)
 	}
-	p.KV([][2]string{
+	return p.KV([][2]string{
 		{"Unit", value.Unit},
 		{"Action", value.Action},
 		{"Success", strconv.FormatBool(value.Success)},
 		{"Exit Code", strconv.Itoa(value.ExitCode)},
 		{"Message", value.Message},
 	})
-	return nil
 }

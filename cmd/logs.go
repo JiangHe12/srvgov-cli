@@ -7,8 +7,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/redact"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/redact"
 
 	"github.com/JiangHe12/srvgov-cli/internal/fanout"
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
@@ -218,7 +218,7 @@ func printLogs(f *cliFlags, value logsView) error {
 	if f.Output == "json" {
 		return p.JSONData("Logs", value)
 	}
-	p.KV([][2]string{
+	if err := p.KV([][2]string{
 		{"Backend", value.Meta.Backend},
 		{"Unit", value.Meta.Unit},
 		{"File", value.Meta.File},
@@ -227,13 +227,14 @@ func printLogs(f *cliFlags, value logsView) error {
 		{"Grep", value.Meta.Grep},
 		{"Requested Lines", strconv.Itoa(value.Meta.RequestedLines)},
 		{"Returned Lines", strconv.Itoa(value.Meta.ReturnedLines)},
-	})
+	}); err != nil {
+		return err
+	}
 	rows := make([][]string, 0, len(value.Lines))
 	for _, line := range value.Lines {
 		rows = append(rows, []string{line.Timestamp, line.Hostname, line.Unit, line.Priority, line.Message})
 	}
-	p.Table([]string{"TIMESTAMP", "HOSTNAME", "UNIT", "PRIORITY", "MESSAGE"}, rows)
-	return nil
+	return p.Table([]string{"TIMESTAMP", "HOSTNAME", "UNIT", "PRIORITY", "MESSAGE"}, rows)
 }
 
 func commandUnavailable(result sshexec.Result) bool {

@@ -8,21 +8,24 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/redact"
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/redact"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
 	"github.com/JiangHe12/srvgov-cli/internal/fanout"
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
+	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
 
 const defaultFanoutConcurrency = 5
 
 type fanoutSummary struct {
-	Total     int `json:"total"`
-	Succeeded int `json:"succeeded"`
-	Failed    int `json:"failed"`
+	Total            int `json:"total"`
+	Succeeded        int `json:"succeeded"`
+	Failed           int `json:"failed"`
+	Uncertain        int `json:"uncertain,omitempty"`
+	OutputIncomplete int `json:"outputIncomplete,omitempty"`
 }
 
 type fanoutErrorView struct {
@@ -61,13 +64,14 @@ func bindFanoutFlags(command *cobra.Command, flags *fanoutFlags) {
 func fanoutDryRunResults(plans []governedFanoutPlan, command string) []fanout.Result {
 	results := make([]fanout.Result, 0, len(plans))
 	for _, plan := range plans {
+		policyCommand := planPolicyCommand(plan, command)
 		results = append(results, fanout.Result{
 			Target: plan.Target.Name,
 			Host:   plan.Target.Host,
 			Data: execDryRunView{
 				Context:               plan.Target.Name,
 				Host:                  plan.Target.Host,
-				Command:               redact.String(command),
+				Command:               redact.String(policyCommand),
 				RiskTier:              riskName(plan.Risk.Base),
 				EffectiveRiskTier:     riskName(plan.Risk.Effective),
 				RequiredAuthorization: requiredAuthorization(plan.Risk.Effective),
@@ -276,9 +280,28 @@ func buildFanoutView(targets []fanout.Target[srvgovctx.Context], concurrency int
 			OK:     result.Err == nil,
 			Data:   result.Data,
 		}
-		if result.Err == nil {
+		state, marked := remoteMutationResultStateOf(result.Err)
+		switch {
+		case result.Err == nil:
 			view.Summary.Succeeded++
-		} else {
+		case marked && state == remoteMutationResultUncertain:
+			view.Summary.Uncertain++
+			appErr := apperrors.AsAppError(result.Err)
+			item.Data = nil
+			item.Error = &fanoutErrorView{
+				Code:    string(appErr.Code),
+				Message: redact.String(appErr.Message),
+			}
+		case marked && state == remoteMutationResultOutputIncomplete:
+			view.Summary.Succeeded++
+			view.Summary.OutputIncomplete++
+			appErr := apperrors.AsAppError(result.Err)
+			item.Data = nil
+			item.Error = &fanoutErrorView{
+				Code:    string(appErr.Code),
+				Message: redact.String(appErr.Message),
+			}
+		default:
 			appErr := apperrors.AsAppError(result.Err)
 			item.Data = nil
 			item.Error = &fanoutErrorView{
@@ -292,6 +315,7 @@ func buildFanoutView(targets []fanout.Target[srvgovctx.Context], concurrency int
 	return view
 }
 
+//nolint:nestif // Output failures must remain ordered before fanout result errors.
 func printFanout(_ *cobra.Command, f *cliFlags, view fanoutView) error {
 	p := newPrinter(f)
 	if f.Output == "json" {
@@ -299,12 +323,22 @@ func printFanout(_ *cobra.Command, f *cliFlags, view fanoutView) error {
 			return err
 		}
 	} else {
-		p.KV([][2]string{
+		if err := p.KV([][2]string{
 			{"Targets", strings.Join(view.Targets, ", ")},
 			{"Concurrency", fmt.Sprintf("%d", view.Concurrency)},
 			{"Succeeded", fmt.Sprintf("%d", view.Summary.Succeeded)},
 			{"Failed", fmt.Sprintf("%d", view.Summary.Failed)},
-		})
+		}); err != nil {
+			return err
+		}
+		if view.Summary.Uncertain > 0 || view.Summary.OutputIncomplete > 0 {
+			if err := p.KV([][2]string{
+				{"Uncertain", fmt.Sprintf("%d", view.Summary.Uncertain)},
+				{"Output incomplete", fmt.Sprintf("%d", view.Summary.OutputIncomplete)},
+			}); err != nil {
+				return err
+			}
+		}
 		rows := make([][]string, 0, len(view.Results))
 		for _, result := range view.Results {
 			errorMessage := ""
@@ -318,10 +352,95 @@ func printFanout(_ *cobra.Command, f *cliFlags, view fanoutView) error {
 				errorMessage,
 			})
 		}
-		p.Table([]string{"TARGET", "HOST", "OK", "ERROR"}, rows)
+		if err := p.Table([]string{"TARGET", "HOST", "OK", "ERROR"}, rows); err != nil {
+			return err
+		}
+	}
+	if view.Summary.Uncertain > 0 {
+		return apperrors.New(
+			apperrors.CodePartialFailure,
+			"one or more fanout mutation target states are uncertain",
+			nil,
+		).WithSuggestion("verify the uncertain target states and mutation IDs before any retry")
+	}
+	if view.Summary.OutputIncomplete > 0 {
+		return apperrors.New(
+			apperrors.CodePartialFailure,
+			"one or more fanout mutations completed but their captured output is incomplete",
+			nil,
+		).WithSuggestion("the mutations already ran; verify target state before any retry")
 	}
 	if view.Summary.Failed > 0 {
 		return apperrors.New(apperrors.CodeBackendError, "one or more fanout targets failed", nil)
 	}
 	return nil
+}
+
+func beginFanoutMutationAudit(
+	f *cliFlags,
+	targets []fanout.Target[srvgovctx.Context],
+	action, command, reason string,
+	risk safety.Risk,
+) (*mutationAuditHandle, error) {
+	if len(targets) == 0 {
+		return nil, apperrors.New(apperrors.CodeValidationFailed, "mutation fanout has no targets", nil)
+	}
+	targetNames := make([]string, 0, len(targets))
+	for _, target := range targets {
+		targetNames = append(targetNames, target.Name)
+	}
+	metadata := mutationPayloadMetadata(action, []byte(command))
+	metadata.Items = len(targets)
+	return beginMutationAudit(f, mutationAuditSpec{
+		Action:      action + ".batch",
+		ContextName: "fanout",
+		Context:     targets[0].Value,
+		Target:      strings.Join(targetNames, "\x00"),
+		RiskTier:    riskName(risk),
+		Ticket:      f.Ticket,
+		Reason:      reason,
+		Metadata:    metadata,
+		Options:     coreAuditOptions(targets[0].Value),
+	})
+}
+
+func finishFanoutMutationAudit(handle *mutationAuditHandle, results []fanout.Result) error {
+	if handle == nil {
+		return nil
+	}
+	outcome := mutationAuditOutcome{}
+	var incompleteErr error
+	for _, result := range results {
+		state, marked := remoteMutationResultStateOf(result.Err)
+		switch {
+		case result.Err == nil:
+			outcome.Succeeded++
+		case marked && state == remoteMutationResultUncertain:
+			outcome.Uncertain++
+		case marked && state == remoteMutationResultOutputIncomplete:
+			outcome.Succeeded++
+			outcome.OutputIncomplete = true
+		default:
+			outcome.Failed++
+			if incompleteErr == nil && apperrors.AsAppError(result.Err).Code == codeAuditIncomplete {
+				incompleteErr = result.Err
+			}
+		}
+	}
+	if outcome.Failed == 0 && outcome.Uncertain == 0 {
+		outcome.Status = srvgovaudit.StatusSucceeded
+	} else {
+		outcome.Status = srvgovaudit.StatusFailed
+		outcome.ErrorCode = string(apperrors.CodeBackendError)
+		if outcome.Uncertain > 0 {
+			outcome.ErrorCode = string(apperrors.CodePartialFailure)
+		}
+		if incompleteErr != nil {
+			outcome.ErrorCode = string(codeAuditIncomplete)
+		}
+	}
+	if err := finishMutationAudit(handle, outcome, nil); err != nil {
+		return err
+	}
+	return incompleteErr
 }

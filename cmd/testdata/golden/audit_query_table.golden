@@ -1,2 +1,2 @@
-  TIMESTAMP    TYPE    OPERATOR    CONTEXT    TARGET    RISK    STATUS    EXIT    COMMAND  
-------------+------+----------+---------+--------+------+--------+------+----------
+  TIMESTAMP    TYPE    OPERATOR    CONTEXT    TARGET_FINGERPRINT    RISK    STATUS    EXIT    ACTION_OR_COMMAND_FINGERPRINT
+------------+------+----------+---------+--------------------+------+--------+------+--------------------------------

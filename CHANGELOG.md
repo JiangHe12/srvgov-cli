@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.10.0
+
+### Added
+
+- Added two-phase mutation auditing for local and remote changes, including per-target fanout records, correlated outcomes, and commit-aware durable replay for definitely uncommitted outcomes.
+
+### Changed
+
+- **BREAKING**: Context and role changes plus confirmed audit pruning are fixed R3 governance operations requiring their precise `--allow-*` flags.
+- Updated to `opskit-core/v2` v2.0.0. Audit verification now authenticates v2 envelopes, while confirmed pruning binds the exact rotation set and advances its checkpoint before deletion.
+
+### Fixed
+
+- Hardened command classification around shell expansion, redirection, ambiguous syntax, and mutating command options so uncertain input escalates instead of being treated as read-only.
+- Applied bounded timeouts to SSH dialing, handshake, session setup, and agent operations.
+- Remote file writes are now size- and digest-bound, reject symlink and non-regular targets, detect target replacement, and commit through a private same-directory temporary file and atomic rename.
+
+### Security
+
+- Strict TOFU now reports first host-key pins on stderr while continuing to reject changed keys. Output and audit persistence redact commands, targets, paths, tickets, reasons, content, and backend error text in favor of fingerprints and bounded metadata.
+
 ## v0.9.2
 
 ### Changed

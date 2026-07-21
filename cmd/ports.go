@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
 
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
@@ -76,6 +76,5 @@ func printPorts(f *cliFlags, ports []observe.Port) error {
 			port.Process,
 		})
 	}
-	p.Table([]string{"PROTO", "LOCAL_ADDR", "LOCAL_PORT", "STATE", "PID", "PROCESS"}, rows)
-	return nil
+	return p.Table([]string{"PROTO", "LOCAL_ADDR", "LOCAL_PORT", "STATE", "PID", "PROCESS"}, rows)
 }

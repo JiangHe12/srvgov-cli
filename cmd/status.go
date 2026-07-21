@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
 
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
@@ -57,7 +57,7 @@ func printStatus(f *cliFlags, value observe.Status) error {
 	if f.Output == "json" {
 		return p.JSONData("ServerStatus", value)
 	}
-	p.KV([][2]string{
+	if err := p.KV([][2]string{
 		{"Hostname", value.Hostname},
 		{"Uptime Seconds", strconv.FormatFloat(value.Uptime, 'f', -1, 64)},
 		{"Load 1/5/15", fmt.Sprintf("%g / %g / %g", value.Load.One, value.Load.Five, value.Load.Fifteen)},
@@ -67,7 +67,9 @@ func printStatus(f *cliFlags, value observe.Status) error {
 		{"Memory Used", strconv.FormatInt(value.Mem.Used, 10)},
 		{"Memory Free", strconv.FormatInt(value.Mem.Free, 10)},
 		{"Kernel", value.Kernel},
-	})
+	}); err != nil {
+		return err
+	}
 	rows := make([][]string, 0, len(value.Disk))
 	for _, disk := range value.Disk {
 		rows = append(rows, []string{
@@ -78,6 +80,5 @@ func printStatus(f *cliFlags, value observe.Status) error {
 			strconv.Itoa(disk.UsePct),
 		})
 	}
-	p.Table([]string{"MOUNT", "SIZE", "USED", "AVAIL", "USE_PCT"}, rows)
-	return nil
+	return p.Table([]string{"MOUNT", "SIZE", "USED", "AVAIL", "USE_PCT"}, rows)
 }

@@ -5,6 +5,8 @@
   "data": {
     "dryRun": true,
     "files": [],
-    "count": 0
+    "count": 0,
+    "started": false,
+    "checkpointState": "unchanged"
   }
 }

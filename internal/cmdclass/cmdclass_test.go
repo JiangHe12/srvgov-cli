@@ -3,8 +3,39 @@ package cmdclass
 import (
 	"testing"
 
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 )
+
+func TestScanPreservesQuotedExpansionMetadata(t *testing.T) {
+	t.Parallel()
+
+	items, ok := scan(`echo '*' * \* ""`)
+	if !ok {
+		t.Fatal("scan returned false")
+	}
+	if len(items) != 5 {
+		t.Fatalf("len(items) = %d, want 5: %#v", len(items), items)
+	}
+	tests := []struct {
+		index             int
+		text              string
+		quoted            bool
+		unquotedExpansion bool
+	}{
+		{index: 0, text: "echo"},
+		{index: 1, text: "*", quoted: true},
+		{index: 2, text: "*", unquotedExpansion: true},
+		{index: 3, text: "*", quoted: true},
+		{index: 4, text: "", quoted: true},
+	}
+	for _, tt := range tests {
+		got := items[tt.index]
+		if got.text != tt.text || got.quoted != tt.quoted || got.unquotedExpansion != tt.unquotedExpansion {
+			t.Fatalf("items[%d] = %#v, want text=%q quoted=%t unquotedExpansion=%t",
+				tt.index, got, tt.text, tt.quoted, tt.unquotedExpansion)
+		}
+	}
+}
 
 func TestClassify(t *testing.T) {
 	t.Parallel()
@@ -24,6 +55,7 @@ func TestClassify(t *testing.T) {
 		{name: "read only systemctl show options after subcommand", cmd: "systemctl show nginx --property=ActiveState", want: safety.R0},
 		{name: "read only file head", cmd: "head -c 1025 -- '/tmp/app file'", want: safety.R0},
 		{name: "read only file stat", cmd: "stat -c '%F\t%s\t%a\t%U\t%G\t%Y' -- '/tmp/app file'", want: safety.R0},
+		{name: "read only canonical parent", cmd: "readlink -f -- '/tmp/app dir'", want: safety.R0},
 		{name: "read only file list", cmd: "find '/tmp/app dir' -mindepth 1 -maxdepth 1 -printf '%f\\0%y\\0%s\\0%m\\0%T@\\0'", want: safety.R0},
 		{name: "read only ss sockets", cmd: "ss -H -lntup", want: safety.R0},
 		{name: "read only netstat sockets", cmd: "netstat -lntup", want: safety.R0},
@@ -172,6 +204,102 @@ func TestClassifyAdversarial(t *testing.T) {
 		{name: "background operator", cmd: "pwd & rm -rf /", want: safety.R3},
 		{name: "unicode whitespace command", cmd: "rm\u00a0-rf\u00a0/", want: safety.R3},
 		{name: "systemctl unit named reboot is not subcommand", cmd: "systemctl restart reboot.service", want: safety.R2},
+		{name: "exec wrapper", cmd: "exec rm -rf /", want: safety.R3},
+		{name: "builtin wrapper", cmd: "builtin rm -rf /", want: safety.R3},
+		{name: "source wrapper", cmd: "source /tmp/maintenance.sh", want: safety.R3},
+		{name: "dot source wrapper", cmd: ". /tmp/maintenance.sh", want: safety.R3},
+		{name: "trap wrapper", cmd: "trap 'rm -rf /tmp/data' EXIT", want: safety.R3},
+		{name: "environment assignment wrapper", cmd: "MODE=unsafe rm -rf /", want: safety.R3},
+		{name: "environment append assignment wrapper", cmd: "PATH+=:/tmp rm -rf /", want: safety.R3},
+		{name: "negation wrapper", cmd: "! rm -rf /", want: safety.R3},
+		{name: "brace expansion in command", cmd: "r{m,echo} -rf /tmp/data", want: safety.R3},
+		{name: "glob expansion in command", cmd: "r? -rf /tmp/data", want: safety.R3},
+		{name: "quoted read glob literal", cmd: "echo '*'", want: safety.R0},
+		{name: "escaped read glob literal", cmd: `echo \*`, want: safety.R0},
+		{name: "unquoted read glob fails closed", cmd: "echo *", want: safety.R3},
+		{name: "find brace expansion fails closed", cmd: "find /tmp -{print,delete}", want: safety.R3},
+		{name: "ss brace expansion fails closed", cmd: "ss --{numeric,kill}", want: safety.R3},
+		{name: "quoted find glob literal", cmd: "find /tmp -name '*.log'", want: safety.R0},
+		{name: "escaped find glob literal", cmd: `find /tmp -name \*.log`, want: safety.R0},
+		{name: "quoted ss brace literal", cmd: "ss '--{numeric,kill}'", want: safety.R0},
+		{name: "brace expansion in write target", cmd: "touch /tmp/{ready,done}", want: safety.R3},
+		{name: "bracket expansion in write target", cmd: "touch /tmp/ready[12]", want: safety.R3},
+		{name: "quoted write glob literal", cmd: "touch '/tmp/ready*'", want: safety.R1},
+		{name: "glob expansion in redirect target", cmd: "echo ready > /tmp/output*", want: safety.R3},
+		{name: "tilde expansion in write target", cmd: "touch ~root/owned", want: safety.R3},
+		{name: "tilde expansion in redirect target", cmd: "echo ready > ~root/owned", want: safety.R3},
+		{name: "tilde expansion in command", cmd: "~/bin/custom inspect", want: safety.R3},
+		{name: "quoted write tilde literal", cmd: "touch '~root/owned'", want: safety.R1},
+		{name: "escaped write tilde literal", cmd: `touch \~root/owned`, want: safety.R1},
+		{name: "quoted read tilde literal", cmd: "echo '~root/owned'", want: safety.R0},
+		{name: "glob expansion in sensitive argument", cmd: "systemctl restart nginx*", want: safety.R3},
+		{name: "glob expansion in remove argument", cmd: "rm /tmp/data*", want: safety.R3},
+		{name: "quoted remove glob literal", cmd: "rm '/tmp/data*'", want: safety.R2},
+		{name: "remove sensitive file without recursive force", cmd: "rm /etc/passwd", want: safety.R3},
+		{name: "remove authorized keys without recursive force", cmd: "rm ~/.ssh/authorized_keys", want: safety.R3},
+		{name: "remove recursively without force", cmd: "rm -r /tmp/data", want: safety.R3},
+		{name: "remove recursively uppercase flag", cmd: "rm -R /tmp/data", want: safety.R3},
+		{name: "remove recursively long option", cmd: "rm --recursive /tmp/data", want: safety.R3},
+		{name: "remove abbreviated recursive option", cmd: "rm --rec /tmp/data", want: safety.R3},
+		{name: "remove abbreviated force option", cmd: "rm --for /tmp/data", want: safety.R3},
+		{name: "remove unknown long option", cmd: "rm --mystery /tmp/data", want: safety.R3},
+		{name: "remove root without recursive flag", cmd: "rm /", want: safety.R3},
+		{name: "remove root no preserve", cmd: "rm --no-preserve-root -r /", want: safety.R3},
+		{name: "remove bin", cmd: "rm /bin/sh", want: safety.R3},
+		{name: "remove lib64", cmd: "rm /lib64/libc.so", want: safety.R3},
+		{name: "remove var", cmd: "rm /var/lib/app/state", want: safety.R3},
+		{name: "remove run", cmd: "rm /run/app.pid", want: safety.R3},
+		{name: "remove force non-sensitive target", cmd: "rm --force /tmp/data", want: safety.R2},
+		{name: "date read current time", cmd: "date", want: safety.R0},
+		{name: "date read parsed time", cmd: "date -d tomorrow +%F", want: safety.R0},
+		{name: "date positional mutation", cmd: "date 072012002026", want: safety.R3},
+		{name: "date unknown option", cmd: "date --mystery", want: safety.R3},
+		{name: "date set long option", cmd: "date --set '2026-07-20 12:00:00'", want: safety.R3},
+		{name: "date set short option", cmd: "date -s tomorrow", want: safety.R3},
+		{name: "hostname read fqdn", cmd: "hostname -f", want: safety.R0},
+		{name: "hostname mutation", cmd: "hostname changed-host", want: safety.R3},
+		{name: "hostname file mutation", cmd: "hostname -F /tmp/hostname", want: safety.R3},
+		{name: "journal read filters", cmd: "journalctl --unit nginx --lines 10", want: safety.R0},
+		{name: "journal user cursor read", cmd: "journalctl --user --show-cursor -n 10", want: safety.R0},
+		{name: "journal system read", cmd: "journalctl --system", want: safety.R0},
+		{name: "journal combined short read", cmd: "journalctl -xeu nginx", want: safety.R0},
+		{name: "journal attached short values", cmd: "journalctl -n100 -pwarning", want: safety.R0},
+		{name: "journal previous boot read", cmd: "journalctl -b -1", want: safety.R0},
+		{name: "journal attached boot read", cmd: "journalctl -b0", want: safety.R0},
+		{name: "journal short option cannot hide rotate", cmd: "journalctl -n --rotate", want: safety.R3},
+		{name: "journal long option cannot hide rotate", cmd: "journalctl --lines --rotate", want: safety.R3},
+		{name: "journal unknown combined short", cmd: "journalctl -xz", want: safety.R3},
+		{name: "journal rotate", cmd: "journalctl --rotate", want: safety.R3},
+		{name: "journal vacuum", cmd: "journalctl --vacuum-time=1s", want: safety.R3},
+		{name: "journal sync", cmd: "journalctl --sync", want: safety.R3},
+		{name: "journal cursor file writes", cmd: "journalctl --cursor-file /tmp/cursor", want: safety.R3},
+		{name: "journal attached sensitive cursor file writes", cmd: "journalctl --cursor-file=/etc/passwd", want: safety.R3},
+		{name: "journal unknown option", cmd: "journalctl --mystery", want: safety.R3},
+		{name: "ip link mutation", cmd: "ip link set eth0 down", want: safety.R3},
+		{name: "ip address flush", cmd: "ip address flush dev eth0", want: safety.R3},
+		{name: "ip route mutation", cmd: "ip route del default", want: safety.R3},
+		{name: "ip rule mutation", cmd: "ip rule add from 192.0.2.0/24 table 100", want: safety.R3},
+		{name: "ip namespace execution", cmd: "ip netns exec prod rm -rf /", want: safety.R3},
+		{name: "ip namespace deletion", cmd: "ip netns delete prod", want: safety.R3},
+		{name: "ip batch execution", cmd: "ip -batch changes.txt", want: safety.R3},
+		{name: "ip unknown object", cmd: "ip mystery show", want: safety.R3},
+		{name: "ip color link read", cmd: "ip -c link show dev eth0", want: safety.R0},
+		{name: "ip abbreviated address read", cmd: "ip -br a", want: safety.R0},
+		{name: "ip abbreviated route read", cmd: "ip r sh table main", want: safety.R0},
+		{name: "ip abbreviated link read", cmd: "ip l sh dev eth0", want: safety.R0},
+		{name: "ip ambiguous action", cmd: "ip link s dev eth0", want: safety.R3},
+		{name: "ip link read", cmd: "ip link show dev eth0", want: safety.R0},
+		{name: "ip address read", cmd: "ip -brief address show", want: safety.R0},
+		{name: "ip route lookup", cmd: "ip route get 192.0.2.1", want: safety.R0},
+		{name: "ip namespace list", cmd: "ip netns list", want: safety.R0},
+		{name: "continued rm command", cmd: "r\\\nm -rf /tmp/data", want: safety.R3},
+		{name: "continued sudo command", cmd: "su\\\ndo id", want: safety.R3},
+		{name: "continued source command", cmd: "sou\\\nrce /tmp/maintenance.sh", want: safety.R3},
+		{name: "double quoted continued rm command", cmd: "\"r\\\nm\" -rf /tmp/data", want: safety.R3},
+		{name: "single quoted backslash newline command is literal", cmd: "'r\\\nm' -rf /tmp/data", want: safety.R2},
+		{name: "double quoted backslash newline is continuation", cmd: "echo \"line\\\nbreak\"", want: safety.R0},
+		{name: "single quoted backslash newline is literal", cmd: "echo 'line\\\nbreak'", want: safety.R0},
+		{name: "continued empty comment remains empty", cmd: "\\\n# comment", want: safety.R3},
 	}
 
 	for _, tt := range tests {
@@ -249,7 +377,10 @@ func TestClassifyDockerSubcommands(t *testing.T) {
 		{name: "start", cmd: "docker start app", want: safety.R2},
 		{name: "stop", cmd: "docker stop app", want: safety.R2},
 		{name: "restart", cmd: "docker restart app", want: safety.R2},
-		{name: "remove", cmd: "docker rm app", want: safety.R2},
+		{name: "remove", cmd: "docker rm app", want: safety.R3},
+		{name: "grouped remove", cmd: "docker container rm app", want: safety.R3},
+		{name: "image remove", cmd: "docker image rm app:old", want: safety.R3},
+		{name: "volume remove", cmd: "docker volume rm data", want: safety.R3},
 		{name: "container stop", cmd: "docker container stop app", want: safety.R2},
 		{name: "container named run", cmd: "docker stop run", want: safety.R2},
 		{name: "container named prune", cmd: "docker restart prune", want: safety.R2},
@@ -274,8 +405,8 @@ func TestClassifyDockerSubcommands(t *testing.T) {
 		{name: "standalone compose", cmd: "docker-compose up -d", want: safety.R3},
 		{name: "stack deploy", cmd: "docker stack deploy -c x.yml s", want: safety.R3},
 		{name: "mixed case dangerous", cmd: "DoCkEr SyStEm PrUnE", want: safety.R3},
-		{name: "unknown direct action", cmd: "docker mystery app", want: safety.R2},
-		{name: "unknown grouped action", cmd: "docker container mystery app", want: safety.R2},
+		{name: "unknown direct action", cmd: "docker mystery app", want: safety.R3},
+		{name: "unknown grouped action", cmd: "docker container mystery app", want: safety.R3},
 	}
 
 	for _, tt := range tests {

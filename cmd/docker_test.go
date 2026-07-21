@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
 	"github.com/JiangHe12/srvgov-cli/internal/cmdclass"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
@@ -25,7 +25,7 @@ func TestDockerCommandsClassifyAndQuoteContainer(t *testing.T) {
 		{name: "start", command: dockerActionCommand("start", container), want: safety.R2},
 		{name: "stop", command: dockerActionCommand("stop", container), want: safety.R2},
 		{name: "restart", command: dockerActionCommand("restart", container), want: safety.R2},
-		{name: "rm", command: dockerActionCommand("rm", container), want: safety.R2},
+		{name: "rm", command: dockerActionCommand("rm", container), want: safety.R3},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -131,28 +131,56 @@ func TestDockerLogsLimitsAndRedactsStdoutAndStderr(t *testing.T) {
 	}
 }
 
-func TestDockerActionsUseR2AndHumanAuthorization(t *testing.T) {
-	actions := []string{"start", "stop", "restart", "rm"}
+func TestDockerActionsUseGovernedHumanAuthorization(t *testing.T) {
+	actions := []struct {
+		name string
+		risk safety.Risk
+	}{
+		{name: "start", risk: safety.R2},
+		{name: "stop", risk: safety.R2},
+		{name: "restart", risk: safety.R2},
+		{name: "rm", risk: safety.R3},
+	}
 	for _, action := range actions {
-		t.Run(action, func(t *testing.T) {
+		t.Run(action.name, func(t *testing.T) {
 			configPath := prepareExecContext(t, false)
-			command := dockerActionCommand(action, "run")
+			command := dockerActionCommand(action.name, "run")
 			runner := &scriptedSSHRunner{results: map[string]sshexec.Result{command: {}}}
 			restore := replaceSSHRunner(runner)
 			t.Cleanup(restore)
 
-			output, err := executeRoot(t, configPath,
+			args := []string{
 				"-o", "json", "--non-interactive", "--yes", "--ticket", "OPS-42",
-				"docker", action, "run", "--reason", "operate container",
-			)
+			}
+			args = append(args, "docker", action.name, "run", "--reason", "operate container")
+			if action.risk == safety.R3 {
+				args = append(args, "--allow-destructive")
+			}
+			output, err := executeRoot(t, configPath, args...)
 			if err != nil {
-				t.Fatalf("docker %s error = %v", action, err)
+				t.Fatalf("docker %s error = %v", action.name, err)
 			}
 			got := decodeJSONData[dockerActionView](t, output, "DockerAction")
-			if cmdclass.Classify(command) != safety.R2 || got.Container != "run" || !got.Success {
+			if cmdclass.Classify(command) != action.risk || got.Container != "run" || !got.Success {
 				t.Fatalf("command = %q; action = %#v", command, got)
 			}
 		})
+	}
+}
+
+func TestDockerRemoveRequiresDestructiveAllowBeforeSSH(t *testing.T) {
+	configPath := prepareExecContext(t, false)
+	runner := &fakeSSHRunner{}
+	restore := replaceSSHRunner(runner)
+	t.Cleanup(restore)
+
+	_, err := executeRoot(t, configPath,
+		"--non-interactive", "--yes", "--ticket", "OPS-42",
+		"docker", "rm", "api", "--reason", "remove retired container",
+	)
+	assertAppError(t, err, apperrors.CodeAuthorizationRequired, 8)
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want 0", runner.calls)
 	}
 }
 
@@ -233,8 +261,11 @@ func TestDockerProtectedActionRunsWithAllowAndAuditsR3(t *testing.T) {
 		t.Fatalf("docker restart error = %v", err)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 1 || events[0].EventType != srvgovaudit.EventTypeDockerAction || events[0].RiskTier != "R3" {
-		t.Fatalf("audit events = %#v", events)
+	intent, outcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeDockerAction), "dev", "R3")
+	if intent.Metadata == nil || intent.Metadata.TargetFingerprint == "" ||
+		outcome.Status != srvgovaudit.StatusSucceeded ||
+		outcome.Outcome.Status != srvgovaudit.StatusSucceeded {
+		t.Fatalf("mutation events = %#v / %#v", intent, outcome)
 	}
 }
 

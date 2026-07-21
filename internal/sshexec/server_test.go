@@ -19,18 +19,21 @@ import (
 type testSSHServer struct {
 	listener net.Listener
 
-	mu              sync.RWMutex
-	hostKey         ssh.Signer
-	acceptedKey     ssh.PublicKey
-	password        string
-	lastAuth        string
-	stdout          string
-	stderr          string
-	exitCode        uint32
-	receivedStdin   string
-	ptyRequested    atomic.Bool
-	stopOnce        sync.Once
-	connectionGroup sync.WaitGroup
+	mu               sync.RWMutex
+	hostKey          ssh.Signer
+	acceptedKey      ssh.PublicKey
+	password         string
+	lastAuth         string
+	stdout           string
+	stderr           string
+	exitCode         uint32
+	receivedStdin    string
+	ptyRequested     atomic.Bool
+	blockSessionOpen atomic.Bool
+	sessionOpenGate  <-chan struct{}
+	sessionRequested chan<- struct{}
+	stopOnce         sync.Once
+	connectionGroup  sync.WaitGroup
 }
 
 func newTestSSHServer(t *testing.T) *testSSHServer {
@@ -75,6 +78,24 @@ func (s *testSSHServer) setPassword(password string) {
 	defer s.mu.Unlock()
 	s.acceptedKey = nil
 	s.password = password
+}
+
+func (s *testSSHServer) setOutput(stdout, stderr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stdout = stdout
+	s.stderr = stderr
+}
+
+func (s *testSSHServer) setBlockSessionOpen(block bool) {
+	s.blockSessionOpen.Store(block)
+}
+
+func (s *testSSHServer) setSessionOpenGate(gate <-chan struct{}, requested chan<- struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionOpenGate = gate
+	s.sessionRequested = requested
 }
 
 func (s *testSSHServer) authentication() string {
@@ -141,6 +162,22 @@ func (s *testSSHServer) handleConnection(connection net.Conn) {
 			_ = channelRequest.Reject(ssh.UnknownChannelType, "session only")
 			continue
 		}
+		if s.blockSessionOpen.Load() {
+			continue
+		}
+		s.mu.RLock()
+		gate := s.sessionOpenGate
+		requested := s.sessionRequested
+		s.mu.RUnlock()
+		if requested != nil {
+			select {
+			case requested <- struct{}{}:
+			default:
+			}
+		}
+		if gate != nil {
+			<-gate
+		}
 		channel, channelRequests, err := channelRequest.Accept()
 		if err != nil {
 			continue
@@ -169,10 +206,15 @@ func (s *testSSHServer) handleSession(channel ssh.Channel, requests <-chan *ssh.
 				s.receivedStdin = string(input)
 				s.mu.Unlock()
 			}
-			_, _ = io.WriteString(channel, s.stdout)
-			_, _ = io.WriteString(channel.Stderr(), s.stderr)
+			s.mu.RLock()
+			stdout := s.stdout
+			stderr := s.stderr
+			exitCode := s.exitCode
+			s.mu.RUnlock()
+			_, _ = io.WriteString(channel, stdout)
+			_, _ = io.WriteString(channel.Stderr(), stderr)
 			status := make([]byte, 4)
-			binary.BigEndian.PutUint32(status, s.exitCode)
+			binary.BigEndian.PutUint32(status, exitCode)
 			_, _ = channel.SendRequest("exit-status", false, status)
 			return
 		default:

@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/redact"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/redact"
 )
 
 var ssProcessPattern = regexp.MustCompile(`\("([^"]*)",pid=([0-9]+)`)

@@ -11,8 +11,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/redact"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/redact"
 
 	"github.com/JiangHe12/srvgov-cli/internal/fanout"
 	"github.com/JiangHe12/srvgov-cli/internal/observe"
@@ -222,11 +222,28 @@ func runDockerFanout(
 	if err := authorizeGovernedFanout(cmd, f, plans, command, reason, allow, maxEffective); err != nil {
 		return err
 	}
+	var batchAudit *mutationAuditHandle
+	if eventType == srvgovaudit.EventTypeDockerAction {
+		batchAudit, err = beginFanoutMutationAudit(
+			f,
+			targets,
+			string(eventType),
+			command,
+			reason,
+			maxEffective,
+		)
+		if err != nil {
+			return err
+		}
+	}
 	results := fanout.Run(cmd.Context(), targets, flags.Concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
 		targetFlags := *f
 		targetFlags.NonInteractive = true
 		return runDockerTarget(cmd, &targetFlags, target.Value, target.Name, action, container, tail, reason, allow, command, eventType)
 	})
+	if err := finishFanoutMutationAudit(batchAudit, results); err != nil {
+		return err
+	}
 	return printFanout(cmd, f, buildFanoutView(targets, flags.Concurrency, results))
 }
 
@@ -490,8 +507,7 @@ func printDockerList(f *cliFlags, items []dockerListItem) error {
 	for _, item := range items {
 		rows = append(rows, []string{item.ID, item.Name, item.Image, item.State, item.Status, item.Ports, item.CreatedAt})
 	}
-	p.Table([]string{"ID", "NAME", "IMAGE", "STATE", "STATUS", "PORTS", "CREATED_AT"}, rows)
-	return nil
+	return p.Table([]string{"ID", "NAME", "IMAGE", "STATE", "STATUS", "PORTS", "CREATED_AT"}, rows)
 }
 
 func printDockerInspect(f *cliFlags, value dockerInspectView) error {
@@ -499,7 +515,7 @@ func printDockerInspect(f *cliFlags, value dockerInspectView) error {
 	if f.Output == "json" {
 		return p.JSONData("DockerInspect", value)
 	}
-	p.KV([][2]string{
+	return p.KV([][2]string{
 		{"ID", value.ID},
 		{"Name", value.Name},
 		{"Image", value.Image},
@@ -510,7 +526,6 @@ func printDockerInspect(f *cliFlags, value dockerInspectView) error {
 		{"Mounts", strconv.Itoa(len(value.Mounts))},
 		{"Created At", value.CreatedAt},
 	})
-	return nil
 }
 
 func printDockerLogs(f *cliFlags, value dockerLogsView) error {
@@ -518,18 +533,19 @@ func printDockerLogs(f *cliFlags, value dockerLogsView) error {
 	if f.Output == "json" {
 		return p.JSONData("DockerLogs", value)
 	}
-	p.KV([][2]string{
+	if err := p.KV([][2]string{
 		{"Backend", value.Meta.Backend},
 		{"Container", value.Meta.Container},
 		{"Requested Lines", strconv.Itoa(value.Meta.RequestedLines)},
 		{"Returned Lines", strconv.Itoa(value.Meta.ReturnedLines)},
-	})
+	}); err != nil {
+		return err
+	}
 	rows := make([][]string, 0, len(value.Lines))
 	for _, line := range value.Lines {
 		rows = append(rows, []string{line.Timestamp, line.Hostname, line.Unit, line.Priority, line.Message})
 	}
-	p.Table([]string{"TIMESTAMP", "HOSTNAME", "UNIT", "PRIORITY", "MESSAGE"}, rows)
-	return nil
+	return p.Table([]string{"TIMESTAMP", "HOSTNAME", "UNIT", "PRIORITY", "MESSAGE"}, rows)
 }
 
 func printDockerAction(f *cliFlags, value dockerActionView) error {
@@ -537,11 +553,10 @@ func printDockerAction(f *cliFlags, value dockerActionView) error {
 	if f.Output == "json" {
 		return p.JSONData("DockerAction", value)
 	}
-	p.KV([][2]string{
+	return p.KV([][2]string{
 		{"Container", value.Container},
 		{"Action", value.Action},
 		{"Success", strconv.FormatBool(value.Success)},
 		{"Exit Code", strconv.Itoa(value.ExitCode)},
 	})
-	return nil
 }

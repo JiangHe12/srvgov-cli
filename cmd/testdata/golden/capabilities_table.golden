@@ -1,7 +1,9 @@
-  KEY                   VALUE
----------------------+---------------------------------------------------------------------------------------------------
-  contextApiVersions    srvgov-cli.io/context/v1
-  auditApiVersions      srvgov-cli.io/audit/v1
-  authorization         R1 requires --reason/--yes; R2 adds --ticket; R3 adds --allow-destructive
-  governance            audit, RBAC, dry-run, strict TOFU, redaction, authorize-all governed fanout
-  commands              ctx, exec, status, ports, logs, svc, file, docker, audit, doctor, version, capabilities, install
+  KEY                         VALUE
+---------------------------+---------------------------------------------------------------------------------------------------
+  contextApiVersions          srvgov-cli.io/context/v1
+  auditApiVersions            opskit-core.io/audit/v2, srvgov-cli.io/audit/v1
+  mutationAuditApiVersions    srvgov-cli.io/mutation-audit/v1
+  errorCodes                  AUDIT_INCOMPLETE
+  authorization               R1 requires --reason/--yes; R2 adds --ticket; R3 requires an operation-specific --allow-*
+  governance                  audit, RBAC, dry-run, strict TOFU, redaction, authorize-all governed fanout
+  commands                    ctx, exec, status, ports, logs, svc, file, docker, audit, doctor, version, capabilities, install

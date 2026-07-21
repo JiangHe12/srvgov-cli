@@ -6,13 +6,14 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	coreaudit "github.com/JiangHe12/opskit-core/audit"
-	"github.com/JiangHe12/opskit-core/redact"
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	coreaudit "github.com/JiangHe12/opskit-core/v2/audit"
+	"github.com/JiangHe12/opskit-core/v2/redact"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
 	"github.com/JiangHe12/srvgov-cli/internal/fanout"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
@@ -31,9 +32,33 @@ type sshStdinRunner interface {
 }
 
 var (
-	newSSHRunner      = func() sshRunner { return sshexec.Client{} }
-	newSSHStdinRunner = func() sshStdinRunner { return sshexec.Client{} }
+	tofuNoticeMu sync.Mutex
+
+	newSSHRunner = func(onTOFU func(sshexec.Pin)) sshRunner {
+		return sshexec.Client{OnTOFU: onTOFU}
+	}
+	newSSHStdinRunner = func(onTOFU func(sshexec.Pin)) sshStdinRunner {
+		return sshexec.Client{OnTOFU: onTOFU}
+	}
 )
+
+func tofuNotice(f *cliFlags) func(sshexec.Pin) {
+	return func(pin sshexec.Pin) {
+		writer := io.Writer(os.Stderr)
+		if f != nil && f.Err != nil {
+			writer = f.Err
+		}
+		tofuNoticeMu.Lock()
+		defer tofuNoticeMu.Unlock()
+		_, _ = fmt.Fprintf(
+			writer,
+			"notice: pinned SSH host key for %q (%s %s); future key changes will be rejected\n",
+			pin.Address,
+			pin.KeyType,
+			pin.Fingerprint,
+		)
+	}
+}
 
 type execDryRunView struct {
 	Context               string   `json:"context"`
@@ -56,8 +81,9 @@ type execResultView struct {
 }
 
 type governedFanoutPlan struct {
-	Target fanout.Target[srvgovctx.Context]
-	Risk   governedRisk
+	Target        fanout.Target[srvgovctx.Context]
+	Risk          governedRisk
+	PolicyCommand string
 }
 
 type execFanoutPlan = governedFanoutPlan
@@ -82,6 +108,7 @@ func newExecCmd(f *cliFlags) *cobra.Command {
 	return command
 }
 
+//nolint:gocyclo,nestif // Fanout authorization, audit, execution, and printing stay visibly ordered.
 func runExec(
 	cmd *cobra.Command,
 	f *cliFlags,
@@ -120,6 +147,20 @@ func runExec(
 		if err := authorizeExecFanout(cmd, f, plans, command, reason, allow, maxEffective); err != nil {
 			return err
 		}
+		var batchAudit *mutationAuditHandle
+		if fanoutPlansContainMutation(plans, srvgovaudit.EventTypeExecRun) {
+			batchAudit, err = beginFanoutMutationAudit(
+				f,
+				targets,
+				string(srvgovaudit.EventTypeExecRun),
+				command,
+				reason,
+				maxEffective,
+			)
+			if err != nil {
+				return err
+			}
+		}
 		results := fanout.Run(cmd.Context(), targets, flags.Concurrency, func(_ context.Context, target fanout.Target[srvgovctx.Context]) (any, error) {
 			targetFlags := *f
 			targetFlags.NonInteractive = true
@@ -146,6 +187,9 @@ func runExec(
 				ExitCode: result.ExitCode,
 			}, nil
 		})
+		if err := finishFanoutMutationAudit(batchAudit, results); err != nil {
+			return err
+		}
 		return printFanout(cmd, f, buildFanoutView(targets, flags.Concurrency, results))
 	}
 	item, contextName, err := loadSelectedContext(f.Context)
@@ -191,9 +235,18 @@ func planGovernedFanout(targets []fanout.Target[srvgovctx.Context], command stri
 		if risk.Effective > maxEffective {
 			maxEffective = risk.Effective
 		}
-		plans = append(plans, governedFanoutPlan{Target: target, Risk: risk})
+		plans = append(plans, governedFanoutPlan{Target: target, Risk: risk, PolicyCommand: command})
 	}
 	return plans, maxEffective
+}
+
+func fanoutPlansContainMutation(plans []governedFanoutPlan, eventType srvgovaudit.EventType) bool {
+	for _, plan := range plans {
+		if isRemoteMutation(eventType, plan.Risk.Base) {
+			return true
+		}
+	}
+	return false
 }
 
 func authorizeExecFanout(
@@ -215,7 +268,10 @@ func authorizeGovernedFanout(
 	allow bool,
 	maxEffective safety.Risk,
 ) error {
-	operator := resolveOperator(f.Operator)
+	operator, err := trustedOperator(f)
+	if err != nil {
+		return err
+	}
 	if maxEffective >= safety.R1 && strings.TrimSpace(reason) == "" {
 		reasonErr := missingReasonError(maxEffective)
 		for _, plan := range plans {
@@ -229,13 +285,14 @@ func authorizeGovernedFanout(
 				operator,
 				f.Ticket,
 				reason,
-				command,
+				planPolicyCommand(plan, command),
 				plan.Risk.Effective,
 				srvgovaudit.StatusDenied,
 				0,
 				"",
 				"",
 				reasonErr,
+				false,
 				srvgovaudit.EventTypeAuthorizationDenied,
 			)
 			break
@@ -266,13 +323,14 @@ func authorizeGovernedFanout(
 			operator,
 			f.Ticket,
 			reason,
-			command,
+			planPolicyCommand(plan, command),
 			plan.Risk.Effective,
 			srvgovaudit.StatusDenied,
 			0,
 			"",
 			"",
 			authErr,
+			false,
 			srvgovaudit.EventTypeAuthorizationDenied,
 		)
 		return apperrors.New(
@@ -287,6 +345,13 @@ func authorizeGovernedFanout(
 		)
 	}
 	return nil
+}
+
+func planPolicyCommand(plan governedFanoutPlan, fallback string) string {
+	if plan.PolicyCommand != "" {
+		return plan.PolicyCommand
+	}
+	return fallback
 }
 
 func loadSelectedContext(name string) (*srvgovctx.Context, string, error) {
@@ -324,7 +389,7 @@ func printExecDryRun(f *cliFlags, contextName string, item srvgovctx.Context, co
 	if f.Output == "json" {
 		return p.JSONData("ExecDryRun", view)
 	}
-	p.KV([][2]string{
+	return p.KV([][2]string{
 		{"Context", view.Context},
 		{"Host", view.Host},
 		{"Command", view.Command},
@@ -333,7 +398,6 @@ func printExecDryRun(f *cliFlags, contextName string, item srvgovctx.Context, co
 		{"Required Authorization", strings.Join(view.RequiredAuthorization, ", ")},
 		{"Dry Run", "true"},
 	})
-	return nil
 }
 
 func printExecResult(f *cliFlags, view execResultView) error {
@@ -341,7 +405,7 @@ func printExecResult(f *cliFlags, view execResultView) error {
 	if f.Output == "json" {
 		return p.JSONData("ExecResult", view)
 	}
-	p.KV([][2]string{
+	return p.KV([][2]string{
 		{"Context", view.Context},
 		{"Host", view.Host},
 		{"Command", view.Command},
@@ -350,7 +414,6 @@ func printExecResult(f *cliFlags, view execResultView) error {
 		{"Stdout", view.Stdout},
 		{"Stderr", view.Stderr},
 	})
-	return nil
 }
 
 func appendExecAudit(
@@ -362,6 +425,7 @@ func appendExecAudit(
 	exitCode int,
 	stdout, stderr string,
 	eventErr error,
+	outputIncomplete bool,
 	eventType srvgovaudit.EventType,
 ) {
 	path, err := coreaudit.DefaultPath()
@@ -374,7 +438,7 @@ func appendExecAudit(
 		appErr := apperrors.AsAppError(eventErr)
 		errorInfo = &srvgovaudit.ErrorInfo{Code: string(appErr.Code), Message: appErr.Message}
 	}
-	if err := srvgovaudit.Append(path, srvgovaudit.Event{
+	if err := appendQueuedAuditEvent(f, path, srvgovaudit.Event{
 		EventType: eventType,
 		Operator:  operator,
 		Context: srvgovaudit.Context{
@@ -382,63 +446,17 @@ func appendExecAudit(
 			Env:       item.Env,
 			Protected: item.Protected,
 		},
-		Ticket:   ticket,
-		Reason:   reason,
-		Target:   srvgovaudit.Target{Host: item.Address()},
-		Command:  command,
-		RiskTier: riskName(risk),
-		Status:   status,
-		Stdout:   stdout,
-		Stderr:   stderr,
-		ExitCode: exitCode,
-		Error:    errorInfo,
-	}, coreaudit.Options{
-		MaxSizeBytes:         item.AuditMaxSize,
-		EncryptPublicKeyPath: item.AuditEncryptKey,
-	}); err != nil {
-		warnAuditFailure(f, err)
-	}
-}
-
-func appendFileWriteAudit(
-	f *cliFlags,
-	item srvgovctx.Context,
-	contextName, operator, ticket, reason, command string,
-	risk safety.Risk,
-	status string,
-	exitCode int,
-	stderr string,
-	eventErr error,
-	fileInfo *srvgovaudit.FileInfo,
-) {
-	path, err := coreaudit.DefaultPath()
-	if err != nil {
-		warnAuditFailure(f, err)
-		return
-	}
-	var errorInfo *srvgovaudit.ErrorInfo
-	if eventErr != nil {
-		appErr := apperrors.AsAppError(eventErr)
-		errorInfo = &srvgovaudit.ErrorInfo{Code: string(appErr.Code), Message: appErr.Message}
-	}
-	if err := srvgovaudit.Append(path, srvgovaudit.Event{
-		EventType: srvgovaudit.EventTypeFileWrite,
-		Operator:  operator,
-		Context: srvgovaudit.Context{
-			Name:      contextName,
-			Env:       item.Env,
-			Protected: item.Protected,
-		},
-		Ticket:   ticket,
-		Reason:   reason,
-		Target:   srvgovaudit.Target{Host: item.Address()},
-		Command:  command,
-		RiskTier: riskName(risk),
-		Status:   status,
-		Stderr:   stderr,
-		ExitCode: exitCode,
-		Error:    errorInfo,
-		File:     fileInfo,
+		Ticket:           ticket,
+		Reason:           reason,
+		Target:           srvgovaudit.Target{Host: item.Address()},
+		Command:          command,
+		RiskTier:         riskName(risk),
+		Status:           status,
+		Stdout:           stdout,
+		Stderr:           stderr,
+		OutputIncomplete: outputIncomplete,
+		ExitCode:         exitCode,
+		Error:            errorInfo,
 	}, coreaudit.Options{
 		MaxSizeBytes:         item.AuditMaxSize,
 		EncryptPublicKeyPath: item.AuditEncryptKey,
@@ -491,14 +509,4 @@ func riskName(risk safety.Risk) string {
 	default:
 		return "R3"
 	}
-}
-
-func resolveOperator(flagValue string) string {
-	if value := strings.TrimSpace(flagValue); value != "" {
-		return value
-	}
-	if value := strings.TrimSpace(os.Getenv("SRVGOV_OPERATOR")); value != "" {
-		return value
-	}
-	return "unknown"
 }

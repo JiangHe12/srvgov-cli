@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
 
 	"github.com/JiangHe12/srvgov-cli/cmd"
 )

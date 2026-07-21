@@ -3,13 +3,13 @@ package cmd
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
-	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
 
@@ -38,8 +38,8 @@ func ctxRoleSetCmd(f *cliFlags) *cobra.Command {
 		Use:   "set <context>",
 		Short: "Assign an operator role for a context",
 		Args:  requireExactArgs("ctx role set"),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runCtxRoleSet(f, args[0], opts)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCtxRoleSet(cmd, f, args[0], opts)
 		},
 	}
 	command.Flags().StringVar(&opts.targetOperator, "target-operator", "", "Operator identity to assign")
@@ -53,8 +53,8 @@ func ctxRoleUnsetCmd(f *cliFlags) *cobra.Command {
 		Use:   "unset <context>",
 		Short: "Remove an operator role from a context",
 		Args:  requireExactArgs("ctx role unset"),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runCtxRoleUnset(f, args[0], opts)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCtxRoleUnset(cmd, f, args[0], opts)
 		},
 	}
 	command.Flags().StringVar(&opts.targetOperator, "target-operator", "", "Operator identity to remove")
@@ -72,51 +72,103 @@ func ctxRoleListCmd(f *cliFlags) *cobra.Command {
 	}
 }
 
-func runCtxRoleSet(f *cliFlags, contextName string, opts roleOptions) error {
+func runCtxRoleSet(cmd *cobra.Command, f *cliFlags, contextName string, opts roleOptions) error {
+	opts.targetOperator = strings.TrimSpace(opts.targetOperator)
 	if opts.targetOperator == "" {
 		return apperrors.New(apperrors.CodeUsageError, "--target-operator is required", nil)
 	}
 	if !validRole(opts.role) {
 		return apperrors.New(apperrors.CodeUsageError, "--role must be reader, writer, or admin", nil)
 	}
-	item, err := loadContextForRole(contextName)
-	if err != nil {
+	var auditHandle *mutationAuditHandle
+	updateErr := srvgovctx.Update(func(cfg *srvgovctx.Config) error {
+		item, ok := cfg.Contexts[contextName]
+		if !ok {
+			return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("context %q not found", contextName), nil)
+		}
+		if authErr := authorizeControlChange(
+			cmd,
+			f,
+			item,
+			contextName,
+			"role.assign",
+			allowRoleChange,
+			f.AllowRoleChange,
+		); authErr != nil {
+			return authErr
+		}
+		var auditErr error
+		auditHandle, auditErr = beginControlMutationAudit(
+			f,
+			"role.assign",
+			contextName,
+			opts.targetOperator,
+			item,
+			item,
+		)
+		if auditErr != nil {
+			return auditErr
+		}
+		item.Roles = cloneRoles(item.Roles)
+		if item.Roles == nil {
+			item.Roles = map[string]string{}
+		}
+		item.Roles[opts.targetOperator] = opts.role
+		cfg.Contexts[contextName] = item
+		return nil
+	})
+	if err := finishControlMutationAudit(auditHandle, updateErr); err != nil {
 		return err
 	}
-	if item.Roles == nil {
-		item.Roles = map[string]string{}
-	}
-	item.Roles[opts.targetOperator] = opts.role
-	if err := srvgovctx.SetContext(contextName, item); err != nil {
-		return err
-	}
-	event := roleAuditEvent(f, srvgovaudit.EventTypeRoleAssign, contextName, opts.targetOperator)
-	event.Command = opts.role
-	emitAudit(f, event, nil)
-	newPrinter(f).Success(fmt.Sprintf("role %q assigned to %q in context %q", opts.role, opts.targetOperator, contextName))
-	return nil
+	return newPrinter(f).Success(fmt.Sprintf("role %q assigned to %q in context %q", opts.role, opts.targetOperator, contextName))
 }
 
-func runCtxRoleUnset(f *cliFlags, contextName string, opts roleOptions) error {
+func runCtxRoleUnset(cmd *cobra.Command, f *cliFlags, contextName string, opts roleOptions) error {
+	opts.targetOperator = strings.TrimSpace(opts.targetOperator)
 	if opts.targetOperator == "" {
 		return apperrors.New(apperrors.CodeUsageError, "--target-operator is required", nil)
 	}
-	item, err := loadContextForRole(contextName)
-	if err != nil {
-		return err
-	}
-	if item.Roles != nil {
+	var auditHandle *mutationAuditHandle
+	updateErr := srvgovctx.Update(func(cfg *srvgovctx.Config) error {
+		item, ok := cfg.Contexts[contextName]
+		if !ok {
+			return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("context %q not found", contextName), nil)
+		}
+		if authErr := authorizeControlChange(
+			cmd,
+			f,
+			item,
+			contextName,
+			"role.revoke",
+			allowRoleChange,
+			f.AllowRoleChange,
+		); authErr != nil {
+			return authErr
+		}
+		var auditErr error
+		auditHandle, auditErr = beginControlMutationAudit(
+			f,
+			"role.revoke",
+			contextName,
+			opts.targetOperator,
+			item,
+			item,
+		)
+		if auditErr != nil {
+			return auditErr
+		}
+		item.Roles = cloneRoles(item.Roles)
 		delete(item.Roles, opts.targetOperator)
 		if len(item.Roles) == 0 {
 			item.Roles = nil
 		}
-	}
-	if err := srvgovctx.SetContext(contextName, item); err != nil {
+		cfg.Contexts[contextName] = item
+		return nil
+	})
+	if err := finishControlMutationAudit(auditHandle, updateErr); err != nil {
 		return err
 	}
-	emitAudit(f, roleAuditEvent(f, srvgovaudit.EventTypeRoleRevoke, contextName, opts.targetOperator), nil)
-	newPrinter(f).Success(fmt.Sprintf("role removed from %q in context %q", opts.targetOperator, contextName))
-	return nil
+	return newPrinter(f).Success(fmt.Sprintf("role removed from %q in context %q", opts.targetOperator, contextName))
 }
 
 func runCtxRoleList(f *cliFlags, contextName string) error {
@@ -130,15 +182,13 @@ func runCtxRoleList(f *cliFlags, contextName string) error {
 		return p.JSONList("RoleList", items, len(items), 1, len(items), false)
 	}
 	if len(items) == 0 {
-		p.Info("(no roles assigned)")
-		return nil
+		return p.Info("(no roles assigned)")
 	}
 	rows := make([][]string, 0, len(items))
 	for _, item := range items {
 		rows = append(rows, []string{item.Operator, item.Role})
 	}
-	p.Table([]string{"OPERATOR", "ROLE"}, rows)
-	return nil
+	return p.Table([]string{"OPERATOR", "ROLE"}, rows)
 }
 
 func loadContextForRole(name string) (srvgovctx.Context, error) {
@@ -170,14 +220,13 @@ func roleItems(roles map[string]string) []roleItem {
 	return items
 }
 
-func roleAuditEvent(f *cliFlags, eventType srvgovaudit.EventType, contextName, operator string) srvgovaudit.Event {
-	return srvgovaudit.Event{
-		EventType: eventType,
-		Operator:  resolveOperator(f.Operator),
-		Context:   srvgovaudit.Context{Name: contextName},
-		Target:    srvgovaudit.Target{Host: operator},
-		Command:   string(eventType),
-		RiskTier:  "R0",
-		Status:    srvgovaudit.StatusSucceeded,
+func cloneRoles(roles map[string]string) map[string]string {
+	if len(roles) == 0 {
+		return nil
 	}
+	cloned := make(map[string]string, len(roles))
+	for operator, role := range roles {
+		cloned[operator] = role
+	}
+	return cloned
 }

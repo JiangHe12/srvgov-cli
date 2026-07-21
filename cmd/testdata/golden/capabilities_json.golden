@@ -12,7 +12,14 @@
         "srvgov-cli.io/context/v1"
       ],
       "auditApiVersions": [
+        "opskit-core.io/audit/v2",
         "srvgov-cli.io/audit/v1"
+      ],
+      "mutationAuditApiVersions": [
+        "srvgov-cli.io/mutation-audit/v1"
+      ],
+      "errorCodes": [
+        "AUDIT_INCOMPLETE"
       ],
       "riskModel": [
         {
@@ -29,19 +36,23 @@
         },
         {
           "level": "R3",
-          "authorization": "--reason plus --yes plus --ticket plus --allow-destructive"
+          "authorization": "--yes plus --ticket plus the operation-specific --allow-* flag; remote changes also require --reason"
         }
       ],
       "allowFlags": [
-        "--allow-destructive"
+        "--allow-destructive",
+        "--allow-context-change",
+        "--allow-context-delete",
+        "--allow-role-change",
+        "--allow-audit-prune"
       ],
       "governance": {
-        "audit": "append-only JSONL with optional age encryption",
+        "audit": "authenticated v2 envelopes use commit-aware mutation audit; not-committed outcomes enter a private replay spool, indeterminate appends are quarantined while already-started outcomes queue behind the marker, and confirmed checkpoint-aware prune is R3 with sibling control evidence, --confirm, --yes, a ticket, and --allow-audit-prune",
         "rbac": "opt-in roles reader/writer/admin",
         "dryRun": true,
         "tofu": "strict SSH host-key fingerprint pinning",
-        "redaction": "command, stdout, stderr, and audit fields are redacted",
-        "fanout": "status, ports, and logs require R0 for every target; exec, svc, file, and docker authorize every target before any execution; --selector resolves targets by context labels"
+        "redaction": "audit persistence omits raw tickets, reasons, commands, targets, output, and error messages; bounded SHA-256 fingerprints and byte lengths are stored",
+        "fanout": "status, ports, and logs require R0 for every target; exec, svc, file, and docker authorize every target and persist a batch intent before any execution; --selector resolves targets by context labels"
       },
       "commands": [
         "ctx",

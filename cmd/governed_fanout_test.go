@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
 
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
@@ -201,14 +201,16 @@ func TestGovernedActionFanoutAuditsEachTargetAtItsOwnTier(t *testing.T) {
 				t.Fatalf("%s fanout error = %v", tt.name, err)
 			}
 			events := readAuditEvents(t)
-			if len(events) != 2 {
+			if len(events) != 6 {
 				t.Fatalf("events = %#v", events)
 			}
-			risks := map[string]string{"alpha": "R2", "bravo": "R3"}
-			for _, event := range events {
-				if event.EventType != tt.eventType || event.RiskTier != risks[event.Context.Name] {
-					t.Fatalf("event = %#v", event)
-				}
+			_, batchOutcome := requireMutationPair(t, events, string(tt.eventType)+".batch", "fanout", "R3")
+			_, alphaOutcome := requireMutationPair(t, events, string(tt.eventType), "alpha", "R2")
+			_, bravoOutcome := requireMutationPair(t, events, string(tt.eventType), "bravo", "R3")
+			if batchOutcome.Outcome.Succeeded != 2 ||
+				alphaOutcome.Outcome.Succeeded != 1 ||
+				bravoOutcome.Outcome.Succeeded != 1 {
+				t.Fatalf("mutation outcomes = %#v / %#v / %#v", batchOutcome, alphaOutcome, bravoOutcome)
 			}
 		})
 	}
@@ -217,7 +219,6 @@ func TestGovernedActionFanoutAuditsEachTargetAtItsOwnTier(t *testing.T) {
 func TestGovernedFanoutDryRunDoesNotConnectOrAudit(t *testing.T) {
 	tests := [][]string{
 		{"svc", "restart", "nginx", "--targets", "alpha,bravo", "--dry-run"},
-		{"file", "write", "/tmp/app", "--targets", "alpha,bravo", "--dry-run"},
 		{"docker", "restart", "api", "--targets", "alpha,bravo", "--dry-run"},
 	}
 	for _, args := range tests {
@@ -249,7 +250,6 @@ func TestGovernedFanoutDryRunDoesNotConnectOrAudit(t *testing.T) {
 func TestGovernedSingleTargetDryRunDoesNotConnectOrAudit(t *testing.T) {
 	tests := [][]string{
 		{"svc", "restart", "nginx", "--dry-run"},
-		{"file", "write", "/tmp/app", "--dry-run"},
 		{"docker", "restart", "api", "--dry-run"},
 	}
 	for _, args := range tests {
@@ -298,20 +298,20 @@ func TestFileWriteFanoutBuffersOnceAndAuditsIndependentDigests(t *testing.T) {
 		t.Fatalf("runner = %#v", runner)
 	}
 	digest := sha256.Sum256([]byte(content))
-	wantSHA := hex.EncodeToString(digest[:])
+	wantSHA := "sha256:" + hex.EncodeToString(digest[:])
 	events := readAuditEvents(t)
-	if len(events) != 2 {
+	if len(events) != 6 {
 		t.Fatalf("events = %#v", events)
 	}
-	risks := map[string]string{"alpha": "R2", "bravo": "R3"}
-	for _, event := range events {
-		if event.EventType != srvgovaudit.EventTypeFileWrite ||
-			event.RiskTier != risks[event.Context.Name] ||
-			event.File == nil ||
-			event.File.BytesWritten != int64(len(content)) ||
-			event.File.SHA256 != wantSHA {
-			t.Fatalf("event = %#v", event)
-		}
+	_, batchOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeFileWrite)+".batch", "fanout", "R3")
+	_, alphaOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeFileWrite), "alpha", "R2")
+	_, bravoOutcome := requireMutationPair(t, events, string(srvgovaudit.EventTypeFileWrite), "bravo", "R3")
+	if batchOutcome.Outcome.Succeeded != 2 ||
+		alphaOutcome.Outcome.PayloadBytes != int64(len(content)) ||
+		alphaOutcome.Outcome.PayloadFingerprint != wantSHA ||
+		bravoOutcome.Outcome.PayloadBytes != int64(len(content)) ||
+		bravoOutcome.Outcome.PayloadFingerprint != wantSHA {
+		t.Fatalf("mutation outcomes = %#v / %#v / %#v", batchOutcome, alphaOutcome, bravoOutcome)
 	}
 	raw := string(readAuditData(t))
 	if strings.Contains(raw, "fanout-secret") || strings.Contains(output, "fanout-secret") {

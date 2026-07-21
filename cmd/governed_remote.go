@@ -7,8 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	coreaudit "github.com/JiangHe12/opskit-core/v2/audit"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
 	"github.com/JiangHe12/srvgov-cli/internal/cmdclass"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
@@ -25,16 +26,20 @@ func runGovernedCommandWithStdin(
 	cmd *cobra.Command,
 	f *cliFlags,
 	item srvgovctx.Context,
-	contextName, command, reason string,
+	contextName, policyCommand, reason string,
 	allow bool,
-	stdin io.Reader,
+	prepareStdin func() (io.Reader, string, error),
 	fileInfo func() *srvgovaudit.FileInfo,
+	validate func() error,
 ) (sshexec.Result, error) {
-	risk := classifyGovernedCommand(item, contextName, command)
-	operator := resolveOperator(f.Operator)
+	risk := classifyGovernedCommand(item, contextName, policyCommand)
+	operator, err := trustedOperator(f)
+	if err != nil {
+		return sshexec.Result{}, err
+	}
 	if risk.Effective >= safety.R1 && strings.TrimSpace(reason) == "" {
 		reasonErr := missingReasonError(risk.Effective)
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", reasonErr, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, policyCommand, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", reasonErr, false, srvgovaudit.EventTypeAuthorizationDenied)
 		return sshexec.Result{}, reasonErr
 	}
 
@@ -51,27 +56,68 @@ func runGovernedCommandWithStdin(
 		Operator:           operator,
 	})
 	if authErr != nil {
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, policyCommand, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, false, srvgovaudit.EventTypeAuthorizationDenied)
 		return sshexec.Result{}, authErr
 	}
 
-	result, runErr := newSSHStdinRunner().RunWithStdin(cmd.Context(), contextName, item, command, stdin)
+	stdin, command, err := prepareStdin()
+	if err != nil {
+		return sshexec.Result{}, err
+	}
+	auditHandle, err := beginRemoteMutationAudit(
+		f,
+		item,
+		contextName,
+		command,
+		reason,
+		risk.Effective,
+		srvgovaudit.EventTypeFileWrite,
+	)
+	if err != nil {
+		return sshexec.Result{}, err
+	}
+	result, runErr := newSSHStdinRunner(tofuNotice(f)).RunWithStdin(cmd.Context(), contextName, item, command, stdin)
 	if runErr != nil {
-		appendFileWriteAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, result.Stderr, runErr, fileInfo())
-		return sshexec.Result{}, runErr
+		uncertainErr := uncertainRemoteMutationError(runErr)
+		return sshexec.Result{}, finishRemoteMutationAudit(auditHandle, fileInfo(), uncertainErr, true, false)
+	}
+	if validate != nil {
+		if validationErr := validate(); validationErr != nil {
+			return result, finishRemoteMutationAudit(
+				auditHandle,
+				fileInfo(),
+				validationErr,
+				false,
+				sshOutputIncomplete(result),
+			)
+		}
 	}
 	if result.ExitCode != 0 {
-		resultErr := apperrors.New(
-			apperrors.CodeBackendError,
-			fmt.Sprintf("remote command exited with status %d", result.ExitCode),
-			nil,
+		resultErr := remoteExitError(result)
+		uncertain := false
+		if !atomicFileWriteExitIsDefiniteFailure(result.ExitCode) {
+			resultErr = uncertainAtomicFileWriteError(result)
+			uncertain = true
+		}
+		return result, finishRemoteMutationAudit(
+			auditHandle,
+			fileInfo(),
+			resultErr,
+			uncertain,
+			sshOutputIncomplete(result),
 		)
-		appendFileWriteAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stderr, resultErr, fileInfo())
-		return result, resultErr
 	}
 
-	appendFileWriteAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stderr, nil, fileInfo())
-	return result, nil
+	if finishErr := finishRemoteMutationAudit(
+		auditHandle,
+		fileInfo(),
+		nil,
+		false,
+		sshOutputIncomplete(result),
+	); finishErr != nil {
+		return result, finishErr
+	}
+	return result, sshOutputLimitError(result, true)
 }
 
 func classifyGovernedCommand(item srvgovctx.Context, contextName, command string) governedRisk {
@@ -97,10 +143,13 @@ func runGovernedCommand(
 	eventType srvgovaudit.EventType,
 ) (sshexec.Result, governedRisk, error) {
 	risk := classifyGovernedCommand(item, contextName, command)
-	operator := resolveOperator(f.Operator)
+	operator, err := trustedOperator(f)
+	if err != nil {
+		return sshexec.Result{}, risk, err
+	}
 	if risk.Effective >= safety.R1 && strings.TrimSpace(reason) == "" {
 		reasonErr := missingReasonError(risk.Effective)
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", reasonErr, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", reasonErr, false, srvgovaudit.EventTypeAuthorizationDenied)
 		return sshexec.Result{}, risk, reasonErr
 	}
 
@@ -117,26 +166,196 @@ func runGovernedCommand(
 		Operator:           operator,
 	})
 	if authErr != nil {
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, false, srvgovaudit.EventTypeAuthorizationDenied)
 		return sshexec.Result{}, risk, authErr
 	}
 
-	result, runErr := newSSHRunner().Run(cmd.Context(), contextName, item, command)
+	mutation := isRemoteMutation(eventType, risk.Base)
+	var auditHandle *mutationAuditHandle
+	if mutation {
+		auditHandle, err = beginRemoteMutationAudit(
+			f,
+			item,
+			contextName,
+			command,
+			reason,
+			risk.Effective,
+			eventType,
+		)
+		if err != nil {
+			return sshexec.Result{}, risk, err
+		}
+	}
+	result, runErr := newSSHRunner(tofuNotice(f)).Run(cmd.Context(), contextName, item, command)
 	if runErr != nil {
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, "", "", runErr, eventType)
+		if mutation {
+			uncertainErr := uncertainRemoteMutationError(runErr)
+			return sshexec.Result{}, risk, finishRemoteMutationAudit(auditHandle, nil, uncertainErr, true, false)
+		}
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, "", "", runErr, false, eventType)
 		return sshexec.Result{}, risk, runErr
 	}
 
 	if result.ExitCode != 0 {
-		resultErr := apperrors.New(
-			apperrors.CodeBackendError,
-			fmt.Sprintf("remote command exited with status %d", result.ExitCode),
-			nil,
-		)
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stdout, result.Stderr, resultErr, eventType)
+		resultErr := remoteExitError(result)
+		if mutation {
+			return result, risk, finishRemoteMutationAudit(
+				auditHandle,
+				nil,
+				resultErr,
+				false,
+				sshOutputIncomplete(result),
+			)
+		}
+		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stdout, result.Stderr, resultErr, sshOutputIncomplete(result), eventType)
 		return result, risk, resultErr
 	}
 
-	appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stdout, result.Stderr, nil, eventType)
-	return result, risk, nil
+	outputErr := sshOutputLimitError(result, mutation)
+	if mutation {
+		if finishErr := finishRemoteMutationAudit(
+			auditHandle,
+			nil,
+			nil,
+			false,
+			sshOutputIncomplete(result),
+		); finishErr != nil {
+			return result, risk, finishErr
+		}
+		return result, risk, outputErr
+	}
+	appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stdout, result.Stderr, nil, sshOutputIncomplete(result), eventType)
+	return result, risk, outputErr
+}
+
+func sshOutputLimitError(result sshexec.Result, mutation bool) error {
+	streams := truncatedSSHStreams(result)
+	if len(streams) == 0 {
+		return nil
+	}
+	err := apperrors.New(
+		apperrors.CodePartialFailure,
+		"remote command completed successfully but "+strings.Join(streams, " and ")+" exceeded the SSH per-stream capture limit",
+		nil,
+	)
+	if mutation {
+		return markRemoteMutationResult(
+			err.WithSuggestion("the mutation already ran; verify target state before any retry"),
+			remoteMutationResultOutputIncomplete,
+		)
+	}
+	return err.WithSuggestion("narrow the command output and retry")
+}
+
+func remoteExitError(result sshexec.Result) error {
+	message := fmt.Sprintf("remote command exited with status %d", result.ExitCode)
+	if streams := truncatedSSHStreams(result); len(streams) > 0 {
+		message += "; captured " + strings.Join(streams, " and ") + " was truncated"
+	}
+	return apperrors.New(apperrors.CodeBackendError, message, nil)
+}
+
+func uncertainAtomicFileWriteError(result sshexec.Result) error {
+	return markRemoteMutationResult(
+		apperrors.New(
+			apperrors.CodePartialFailure,
+			fmt.Sprintf(
+				"remote file write exited with status %d during the atomic commit window; the target state is uncertain",
+				result.ExitCode,
+			),
+			nil,
+		).WithSuggestion("verify the target file and mutation ID before any retry"),
+		remoteMutationResultUncertain,
+	)
+}
+
+func truncatedSSHStreams(result sshexec.Result) []string {
+	var streams []string
+	if result.StdoutTruncated {
+		streams = append(streams, "stdout")
+	}
+	if result.StderrTruncated {
+		streams = append(streams, "stderr")
+	}
+	return streams
+}
+
+func sshOutputIncomplete(result sshexec.Result) bool {
+	return result.StdoutTruncated || result.StderrTruncated
+}
+
+func uncertainRemoteMutationError(cause error) error {
+	return markRemoteMutationResult(
+		apperrors.New(
+			apperrors.CodePartialFailure,
+			"SSH failed after the remote mutation was authorized; the target state is uncertain",
+			cause,
+		).WithSuggestion("verify the target state and mutation ID before any retry"),
+		remoteMutationResultUncertain,
+	)
+}
+
+func isRemoteMutation(eventType srvgovaudit.EventType, baseRisk safety.Risk) bool {
+	switch eventType { //nolint:exhaustive // Only remote mutation events and mutating exec need matching here.
+	case srvgovaudit.EventTypeFileWrite,
+		srvgovaudit.EventTypeSvcAction,
+		srvgovaudit.EventTypeDockerAction:
+		return true
+	case srvgovaudit.EventTypeExecRun:
+		return baseRisk >= safety.R1
+	default:
+		return false
+	}
+}
+
+func beginRemoteMutationAudit(
+	f *cliFlags,
+	item srvgovctx.Context,
+	contextName, command, reason string,
+	risk safety.Risk,
+	eventType srvgovaudit.EventType,
+) (*mutationAuditHandle, error) {
+	return beginMutationAudit(f, mutationAuditSpec{
+		Action:      string(eventType),
+		ContextName: contextName,
+		Context:     item,
+		Target:      item.Address(),
+		RiskTier:    riskName(risk),
+		Ticket:      f.Ticket,
+		Reason:      reason,
+		Metadata:    mutationPayloadMetadata(string(eventType), []byte(command)),
+		Options: coreaudit.Options{
+			MaxSizeBytes:         item.AuditMaxSize,
+			EncryptPublicKeyPath: item.AuditEncryptKey,
+		},
+	})
+}
+
+func finishRemoteMutationAudit(
+	handle *mutationAuditHandle,
+	fileInfo *srvgovaudit.FileInfo,
+	operationErr error,
+	uncertain bool,
+	outputIncomplete bool,
+) error {
+	outcome := mutationAuditOutcome{OutputIncomplete: outputIncomplete}
+	switch {
+	case operationErr == nil:
+		outcome.Status = srvgovaudit.StatusSucceeded
+		outcome.Succeeded = 1
+	case uncertain:
+		outcome.Status = srvgovaudit.StatusFailed
+		outcome.Uncertain = 1
+	default:
+		outcome.Status = srvgovaudit.StatusFailed
+		outcome.Failed = 1
+	}
+	if fileInfo != nil {
+		outcome.PayloadFingerprint = fileInfo.SHA256
+		if outcome.PayloadFingerprint != "" && !strings.HasPrefix(outcome.PayloadFingerprint, "sha256:") {
+			outcome.PayloadFingerprint = "sha256:" + outcome.PayloadFingerprint
+		}
+		outcome.PayloadBytes = fileInfo.BytesWritten
+	}
+	return finishMutationAudit(handle, outcome, operationErr)
 }

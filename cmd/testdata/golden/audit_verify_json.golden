@@ -3,19 +3,19 @@
   "kind": "AuditVerifyResult",
   "success": true,
   "data": {
-    "files": [
-      {
-        "path": "testdata/missing-audit.log",
-        "total": 0,
-        "valid": 0,
-        "malformed": 0
-      }
-    ],
+    "files": [],
     "total": 0,
     "valid": 0,
     "malformed": 0,
     "schemaErrors": 0,
     "timestampOrderViolations": 0,
+    "authenticated": 0,
+    "legacyUnauthenticated": 0,
+    "encryptedOpaque": 0,
+    "integrityErrors": 0,
+    "sequenceViolations": 0,
+    "checkpointViolations": 0,
+    "truncationDetected": false,
     "lock": {
       "path": "testdata/missing-audit.log.lock",
       "present": false

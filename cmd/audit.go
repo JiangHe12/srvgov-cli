@@ -3,13 +3,14 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/JiangHe12/opskit-core/apperrors"
-	coreaudit "github.com/JiangHe12/opskit-core/audit"
-	"github.com/JiangHe12/opskit-core/safety"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	coreaudit "github.com/JiangHe12/opskit-core/v2/audit"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 )
@@ -133,7 +134,10 @@ func runAuditVerify(f *cliFlags, opts auditVerifyOptions) error {
 		emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditVerify), err)
 		return err
 	}
-	result, err := coreaudit.Verify(path, coreaudit.VerifyOptions{})
+	result, err := coreaudit.Verify(path, coreaudit.VerifyOptions{
+		Decrypt:    true,
+		PrivateKey: os.Getenv(srvgovAuditPrivateKeyEnv),
+	})
 	strictErr := strictVerifyError(result, opts.strict)
 	event := auditCommandEvent(f, srvgovaudit.EventTypeAuditVerify)
 	if err != nil {
@@ -161,6 +165,7 @@ func auditRawFilter(opts auditQueryOptions) (coreaudit.Filter, error) {
 		Operator:    opts.operator,
 		ContextName: opts.context,
 		Status:      opts.status,
+		PrivateKey:  os.Getenv(srvgovAuditPrivateKeyEnv),
 	}
 	if opts.since != "" {
 		since, err := coreaudit.ParseTime(opts.since, now)
@@ -199,7 +204,7 @@ func strictVerifyError(result coreaudit.VerifyResult, strict bool) error {
 	if !strict {
 		return nil
 	}
-	if result.Malformed > 0 || result.SchemaErrors > 0 || result.TimestampOrderViolations > 0 {
+	if result.HasProblems() {
 		return apperrors.New(apperrors.CodeValidationFailed, "audit verification failed", nil)
 	}
 	return nil
@@ -208,7 +213,7 @@ func strictVerifyError(result coreaudit.VerifyResult, strict bool) error {
 func auditCommandEvent(f *cliFlags, eventType srvgovaudit.EventType) srvgovaudit.Event {
 	return srvgovaudit.Event{
 		EventType: eventType,
-		Operator:  resolveOperator(f.Operator),
+		Operator:  currentOperator(f),
 		Target:    srvgovaudit.Target{Host: string(eventType)},
 		Command:   string(eventType),
 		RiskTier:  "R0",
@@ -226,24 +231,34 @@ func printAuditQuery(f *cliFlags, result auditQueryResult) error {
 	}
 	rows := make([][]string, 0, len(result.Events))
 	for _, event := range result.Events {
+		target := event.Target.Fingerprint
+		if event.Metadata != nil && event.Metadata.TargetFingerprint != "" {
+			target = event.Metadata.TargetFingerprint
+		}
+		command := event.CommandFingerprint
+		if event.Action != "" {
+			command = event.Action
+		}
 		rows = append(rows, []string{
 			event.Timestamp.UTC().Format(time.RFC3339),
 			string(event.EventType),
 			event.Operator,
 			event.Context.Name,
-			event.Target.Host,
+			target,
 			event.RiskTier,
 			event.Status,
 			fmt.Sprintf("%d", event.ExitCode),
-			event.Command,
+			command,
 		})
 	}
-	p.Table(
-		[]string{"TIMESTAMP", "TYPE", "OPERATOR", "CONTEXT", "TARGET", "RISK", "STATUS", "EXIT", "COMMAND"},
+	if err := p.Table(
+		[]string{"TIMESTAMP", "TYPE", "OPERATOR", "CONTEXT", "TARGET_FINGERPRINT", "RISK", "STATUS", "EXIT", "ACTION_OR_COMMAND_FINGERPRINT"},
 		rows,
-	)
+	); err != nil {
+		return err
+	}
 	if result.Malformed > 0 {
-		_, _ = fmt.Fprintf(p.Out, "\nMalformed entries skipped: %d\n", result.Malformed)
+		return p.Info(fmt.Sprintf("\nMalformed entries skipped: %d", result.Malformed))
 	}
 	return nil
 }
@@ -253,20 +268,87 @@ func printAuditVerify(f *cliFlags, result coreaudit.VerifyResult) error {
 	if f.Output == "json" {
 		return p.JSONData("AuditVerifyResult", result)
 	}
-	p.Table([]string{"TOTAL", "VALID", "MALFORMED", "SCHEMA_ERRORS", "TIMESTAMP_ORDER_VIOLATIONS"}, [][]string{{
+	if f.Output == "plain" {
+		p.PlainHead = true
+	}
+	if err := p.Table([]string{
+		"TOTAL",
+		"VALID",
+		"MALFORMED",
+		"SCHEMA_ERRORS",
+		"TIMESTAMP_ORDER_VIOLATIONS",
+		"AUTHENTICATED",
+		"LEGACY_UNAUTHENTICATED",
+		"ENCRYPTED_OPAQUE",
+		"INTEGRITY_ERRORS",
+		"SEQUENCE_VIOLATIONS",
+		"CHECKPOINT_VIOLATIONS",
+		"TRUNCATION_DETECTED",
+		"LOCK_PRESENT",
+		"LOCK_PATH",
+		"LOCK_CONTENT",
+	}, [][]string{{
 		fmt.Sprint(result.Total),
 		fmt.Sprint(result.Valid),
 		fmt.Sprint(result.Malformed),
 		fmt.Sprint(result.SchemaErrors),
 		fmt.Sprint(result.TimestampOrderViolations),
-	}})
-	return nil
+		fmt.Sprint(result.Authenticated),
+		fmt.Sprint(result.LegacyUnauthenticated),
+		fmt.Sprint(result.EncryptedOpaque),
+		fmt.Sprint(result.IntegrityErrors),
+		fmt.Sprint(result.SequenceViolations),
+		fmt.Sprint(result.CheckpointViolations),
+		fmt.Sprint(result.TruncationDetected),
+		fmt.Sprint(result.Lock.Present),
+		result.Lock.Path,
+		result.Lock.Content,
+	}}); err != nil {
+		return err
+	}
+	rows := make([][]string, 0, len(result.Files))
+	for _, file := range result.Files {
+		rows = append(rows, []string{
+			file.Path,
+			fmt.Sprint(file.Total),
+			fmt.Sprint(file.Valid),
+			fmt.Sprint(file.Malformed),
+			fmt.Sprint(file.SchemaError),
+			fmt.Sprint(file.TimestampOrderViolations),
+			fmt.Sprint(file.Authenticated),
+			fmt.Sprint(file.LegacyUnauthenticated),
+			fmt.Sprint(file.EncryptedOpaque),
+			fmt.Sprint(file.IntegrityErrors),
+			fmt.Sprint(file.SequenceViolations),
+			file.Quarantine,
+			fmt.Sprint(file.Repaired),
+		})
+	}
+	return p.Table([]string{
+		"PATH",
+		"TOTAL",
+		"VALID",
+		"MALFORMED",
+		"SCHEMA_ERRORS",
+		"TIMESTAMP_ORDER_VIOLATIONS",
+		"AUTHENTICATED",
+		"LEGACY_UNAUTHENTICATED",
+		"ENCRYPTED_OPAQUE",
+		"INTEGRITY_ERRORS",
+		"SEQUENCE_VIOLATIONS",
+		"QUARANTINE",
+		"REPAIRED",
+	}, rows)
 }
 
 func authorizeRead(f *cliFlags) error {
+	operator, err := trustedOperator(f)
+	if err != nil {
+		return err
+	}
 	return safety.Authorize(safety.R0, safety.Options{
 		NonInteractive: f.NonInteractive,
-		Operator:       resolveOperator(f.Operator),
+		Operator:       operator,
 	})
 }
 
@@ -281,7 +363,7 @@ func emitAudit(f *cliFlags, event srvgovaudit.Event, eventErr error) {
 		event.Status = srvgovaudit.StatusFailed
 		event.Error = &srvgovaudit.ErrorInfo{Code: string(appErr.Code), Message: appErr.Message}
 	}
-	if err := srvgovaudit.Append(path, event, coreaudit.Options{}); err != nil {
+	if err := appendQueuedAuditEvent(f, path, event, coreaudit.Options{}); err != nil {
 		warnAuditFailure(f, err)
 	}
 }

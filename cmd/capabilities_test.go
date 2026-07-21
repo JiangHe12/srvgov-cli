@@ -16,10 +16,15 @@ func TestCapabilitiesReflectSrvGovSurface(t *testing.T) {
 	if got.Tool.Name != "srvgov" || strings.Join(got.Supported.ContextAPIVersions, ",") != "srvgov-cli.io/context/v1" {
 		t.Fatalf("capabilities = %#v", got)
 	}
-	if strings.Join(got.Supported.AuditAPIVersions, ",") != "srvgov-cli.io/audit/v1" {
+	if strings.Join(got.Supported.AuditAPIVersions, ",") != "opskit-core.io/audit/v2,srvgov-cli.io/audit/v1" {
 		t.Fatalf("audit API versions = %#v", got.Supported.AuditAPIVersions)
 	}
-	if strings.Join(got.Supported.AllowFlags, ",") != "--allow-destructive" {
+	if strings.Join(got.Supported.MutationAuditAPIVersions, ",") != mutationAuditAPIVersion ||
+		strings.Join(got.Supported.ErrorCodes, ",") != string(codeAuditIncomplete) {
+		t.Fatalf("mutation audit capabilities = %#v / %#v", got.Supported.MutationAuditAPIVersions, got.Supported.ErrorCodes)
+	}
+	if strings.Join(got.Supported.AllowFlags, ",") !=
+		"--allow-destructive,--allow-context-change,--allow-context-delete,--allow-role-change,--allow-audit-prune" {
 		t.Fatalf("allow flags = %#v", got.Supported.AllowFlags)
 	}
 	if len(got.Supported.RiskModel) != 4 {
@@ -28,7 +33,10 @@ func TestCapabilitiesReflectSrvGovSurface(t *testing.T) {
 	if !got.Supported.Governance.DryRun || got.Supported.Governance.TOFU == "" || got.Supported.Governance.Redaction == "" {
 		t.Fatalf("governance = %#v", got.Supported.Governance)
 	}
-	if got.Supported.Governance.Fanout != "status, ports, and logs require R0 for every target; exec, svc, file, and docker authorize every target before any execution; --selector resolves targets by context labels" {
+	if !strings.Contains(got.Supported.Governance.Audit, "--allow-audit-prune") {
+		t.Fatalf("audit governance = %q", got.Supported.Governance.Audit)
+	}
+	if !strings.Contains(got.Supported.Governance.Fanout, "persist a batch intent before any execution") {
 		t.Fatalf("fanout = %q", got.Supported.Governance.Fanout)
 	}
 	for _, command := range []string{"ctx", "exec", "status", "ports", "logs", "svc", "file", "docker", "audit", "doctor", "version", "install"} {
@@ -58,7 +66,7 @@ func TestCapabilitiesJSONFamilySchema(t *testing.T) {
 	if strings.Join(env.Data.Supported.ContextAPIVersions, ",") != "srvgov-cli.io/context/v1" {
 		t.Fatalf("context API versions = %#v", env.Data.Supported.ContextAPIVersions)
 	}
-	if strings.Join(env.Data.Supported.AuditAPIVersions, ",") != "srvgov-cli.io/audit/v1" {
+	if strings.Join(env.Data.Supported.AuditAPIVersions, ",") != "opskit-core.io/audit/v2,srvgov-cli.io/audit/v1" {
 		t.Fatalf("audit API versions = %#v", env.Data.Supported.AuditAPIVersions)
 	}
 	if len(env.Data.Domain) != 0 {

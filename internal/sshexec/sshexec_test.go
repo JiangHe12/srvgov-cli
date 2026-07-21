@@ -12,12 +12,14 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
-	"github.com/JiangHe12/opskit-core/credstore"
-	corectx "github.com/JiangHe12/opskit-core/ctx"
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	"github.com/JiangHe12/opskit-core/v2/credstore"
+	corectx "github.com/JiangHe12/opskit-core/v2/ctx"
 
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
@@ -241,6 +243,338 @@ func TestRunStillCapturesOutputWithoutStdin(t *testing.T) {
 	}
 }
 
+func TestRunBoundsCapturedOutputPerStream(t *testing.T) {
+	server := newTestSSHServer(t)
+	server.setPassword("login-secret")
+	server.setOutput("0123456789abcdef", "abcdefghijklmnop")
+	target := contextForServer(t, server, srvgovctx.Context{
+		Base: corectx.Base{Username: "alice", Password: "login-secret"},
+	})
+
+	result, err := (Client{
+		KnownHostsPath:          filepath.Join(t.TempDir(), "known_hosts"),
+		MaxOutputBytesPerStream: 8,
+	}).Run(context.Background(), "dev", target, "ignored")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Stdout != "01234567" || result.Stderr != "abcdefgh" {
+		t.Fatalf("bounded result = %#v", result)
+	}
+	if !result.StdoutTruncated || !result.StderrTruncated {
+		t.Fatalf("truncation flags = stdout:%t stderr:%t, want both true", result.StdoutTruncated, result.StderrTruncated)
+	}
+}
+
+func TestRunWithStdinBoundsStderrAndDoesNotFlagDiscardedStdout(t *testing.T) {
+	server := newTestSSHServer(t)
+	server.setPassword("login-secret")
+	server.setOutput(strings.Repeat("x", 32), strings.Repeat("y", 32))
+	target := contextForServer(t, server, srvgovctx.Context{
+		Base: corectx.Base{Username: "alice", Password: "login-secret"},
+	})
+
+	result, err := (Client{
+		KnownHostsPath:          filepath.Join(t.TempDir(), "known_hosts"),
+		MaxOutputBytesPerStream: 5,
+	}).RunWithStdin(context.Background(), "dev", target, "tee -- '/tmp/file'", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatalf("RunWithStdin() error = %v", err)
+	}
+	if result.Stdout != "" || result.StdoutTruncated {
+		t.Fatalf("discarded stdout result = %#v", result)
+	}
+	if result.Stderr != "yyyyy" || !result.StderrTruncated {
+		t.Fatalf("bounded stderr result = %#v", result)
+	}
+}
+
+func TestDialAppliesDeadlineToSSHHandshake(t *testing.T) {
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	release := make(chan struct{})
+	defer close(release)
+	accepted := make(chan struct{})
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = connection.Close() }()
+		close(accepted)
+		<-release
+	}()
+
+	config := &ssh.ClientConfig{
+		User: "alice",
+		HostKeyCallback: func(string, net.Addr, ssh.PublicKey) error {
+			return nil
+		},
+	}
+	started := time.Now()
+	_, err = dial(context.Background(), listener.Addr().String(), config, 75*time.Millisecond)
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("dial() error = nil, want handshake timeout")
+	}
+	select {
+	case <-accepted:
+	default:
+		t.Fatal("server did not accept the TCP connection")
+	}
+	var networkErr net.Error
+	if !errors.As(err, &networkErr) || !networkErr.Timeout() {
+		t.Fatalf("dial() error = %T %v, want timeout", err, err)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("dial() elapsed = %s, want bounded handshake", elapsed)
+	}
+}
+
+func TestDialCancelsBlockedSSHHandshake(t *testing.T) {
+	var listenConfig net.ListenConfig
+	listener, err := listenConfig.Listen(context.Background(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	release := make(chan struct{})
+	defer close(release)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			return
+		}
+		defer func() { _ = connection.Close() }()
+		cancel()
+		<-release
+	}()
+
+	config := &ssh.ClientConfig{
+		User: "alice",
+		HostKeyCallback: func(string, net.Addr, ssh.PublicKey) error {
+			return nil
+		},
+	}
+	started := time.Now()
+	_, err = dial(ctx, listener.Addr().String(), config, 5*time.Second)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("dial() error = %T %v, want context.Canceled", err, err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("dial() elapsed = %s, want prompt cancellation", elapsed)
+	}
+}
+
+func TestRunTimesOutBlockedSessionOpen(t *testing.T) {
+	server := newTestSSHServer(t)
+	server.setPassword("login-secret")
+	server.setBlockSessionOpen(true)
+	target := contextForServer(t, server, srvgovctx.Context{
+		Base: corectx.Base{Username: "alice", Password: "login-secret"},
+	})
+	client := Client{
+		KnownHostsPath: filepath.Join(t.TempDir(), "known_hosts"),
+		Timeout:        75 * time.Millisecond,
+	}
+
+	started := time.Now()
+	_, err := client.Run(context.Background(), "dev", target, "ignored")
+	if err == nil {
+		t.Fatal("Run() error = nil, want session-open timeout")
+	}
+	if got := apperrors.AsAppError(err).Code; got != apperrors.CodeNetworkError {
+		t.Fatalf("Run() code = %s, want %s; error=%v", got, apperrors.CodeNetworkError, err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Run() elapsed = %s, want bounded session setup", elapsed)
+	}
+}
+
+func TestRunCancelRaceWithSessionOpenNeverReturnsBrokenSuccess(t *testing.T) {
+	server := newTestSSHServer(t)
+	server.setPassword("login-secret")
+	target := contextForServer(t, server, srvgovctx.Context{
+		Base: corectx.Base{Username: "alice", Password: "login-secret"},
+	})
+	client := Client{
+		KnownHostsPath: filepath.Join(t.TempDir(), "known_hosts"),
+		Timeout:        time.Second,
+	}
+
+	for attempt := 0; attempt < 20; attempt++ {
+		gate := make(chan struct{})
+		requested := make(chan struct{}, 1)
+		server.setSessionOpenGate(gate, requested)
+		ctx, cancel := context.WithCancel(context.Background())
+		resultDone := make(chan struct {
+			result Result
+			err    error
+		}, 1)
+		go func() {
+			result, err := client.Run(ctx, "dev", target, "ignored")
+			resultDone <- struct {
+				result Result
+				err    error
+			}{result: result, err: err}
+		}()
+
+		select {
+		case <-requested:
+		case <-time.After(time.Second):
+			cancel()
+			close(gate)
+			t.Fatal("server did not observe session-open request")
+		}
+		start := make(chan struct{})
+		go func() {
+			<-start
+			cancel()
+		}()
+		go func() {
+			<-start
+			close(gate)
+		}()
+		close(start)
+
+		outcome := <-resultDone
+		server.setSessionOpenGate(nil, nil)
+		if outcome.err == nil {
+			if outcome.result.Stdout != "stdout-data" || outcome.result.ExitCode != 7 {
+				t.Fatalf("attempt %d returned broken success: %#v", attempt, outcome.result)
+			}
+			continue
+		}
+		if got := apperrors.AsAppError(outcome.err).Code; got != apperrors.CodeNetworkError {
+			t.Fatalf("attempt %d code = %s, want %s; error=%v", attempt, got, apperrors.CodeNetworkError, outcome.err)
+		}
+	}
+}
+
+func TestRunTimesOutUnresponsiveAgent(t *testing.T) {
+	server := newTestSSHServer(t)
+	target := contextForServer(t, server, srvgovctx.Context{
+		Base:        corectx.Base{Username: "alice"},
+		AuthMethods: []string{srvgovctx.AuthAgent},
+	})
+	clientConn, agentConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = agentConn.Close()
+	})
+	client := Client{
+		KnownHostsPath: filepath.Join(t.TempDir(), "known_hosts"),
+		AgentDial: func(context.Context) (net.Conn, error) {
+			return clientConn, nil
+		},
+		Timeout: 75 * time.Millisecond,
+	}
+
+	started := time.Now()
+	_, err := client.Run(context.Background(), "dev", target, "ignored")
+	if got := apperrors.AsAppError(err).Code; got != apperrors.CodeNetworkError {
+		t.Fatalf("Run() code = %s, want %s; error=%v", got, apperrors.CodeNetworkError, err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Run() elapsed = %s, want bounded agent communication", elapsed)
+	}
+}
+
+func TestRunCancelsUnresponsiveAgent(t *testing.T) {
+	server := newTestSSHServer(t)
+	target := contextForServer(t, server, srvgovctx.Context{
+		Base:        corectx.Base{Username: "alice"},
+		AuthMethods: []string{srvgovctx.AuthAgent},
+	})
+	clientConn, agentConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = agentConn.Close()
+	})
+	client := Client{
+		KnownHostsPath: filepath.Join(t.TempDir(), "known_hosts"),
+		AgentDial: func(context.Context) (net.Conn, error) {
+			return clientConn, nil
+		},
+		Timeout: 5 * time.Second,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	started := time.Now()
+	_, err := client.Run(ctx, "dev", target, "ignored")
+	if got := apperrors.AsAppError(err).Code; got != apperrors.CodeNetworkError {
+		t.Fatalf("Run() code = %s, want %s; error=%v", got, apperrors.CodeNetworkError, err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("Run() elapsed = %s, want prompt agent cancellation", elapsed)
+	}
+}
+
+func TestRunMapsBlockedAgentSignTimeoutToNetworkError(t *testing.T) {
+	server := newTestSSHServer(t)
+	privateKey, signer := newTestKey(t)
+	server.setPublicKey(signer.PublicKey())
+	target := contextForServer(t, server, srvgovctx.Context{
+		Base:        corectx.Base{Username: "alice"},
+		AuthMethods: []string{srvgovctx.AuthAgent},
+	})
+	keyring := agent.NewKeyring()
+	if err := keyring.Add(agent.AddedKey{PrivateKey: privateKey}); err != nil {
+		t.Fatalf("agent Add() error = %v", err)
+	}
+	blockedAgent := &blockingSignAgent{
+		Agent:   keyring,
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() {
+		close(blockedAgent.release)
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+	go func() {
+		_ = agent.ServeAgent(blockedAgent, serverConn)
+	}()
+	client := Client{
+		KnownHostsPath: filepath.Join(t.TempDir(), "known_hosts"),
+		AgentDial: func(context.Context) (net.Conn, error) {
+			return clientConn, nil
+		},
+		Timeout: time.Second,
+	}
+
+	started := time.Now()
+	_, err := client.Run(context.Background(), "dev", target, "ignored")
+	if got := apperrors.AsAppError(err).Code; got != apperrors.CodeNetworkError {
+		t.Fatalf("Run() code = %s, want %s; error=%v", got, apperrors.CodeNetworkError, err)
+	}
+	select {
+	case <-blockedAgent.started:
+	default:
+		t.Fatal("SSH handshake never requested an agent signature")
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("Run() elapsed = %s, want bounded agent signing", elapsed)
+	}
+}
+
+func TestDefaultOutputLimitCoversMaximumFileReadProbe(t *testing.T) {
+	const maximumFileReadProbe = (16 << 20) + 1
+	if got := (Client{}).maxOutputBytesPerStream(); got < maximumFileReadProbe {
+		t.Fatalf("default output limit = %d, want at least %d", got, maximumFileReadProbe)
+	}
+}
+
 func TestAuthenticationChainPrivateKeyThenAgentThenPassword(t *testing.T) {
 	t.Run("private key", func(t *testing.T) {
 		server := newTestSSHServer(t)
@@ -378,6 +712,18 @@ func pipeAgentDialer(t *testing.T, keyring agent.Agent) func(context.Context) (n
 		}()
 		return client, nil
 	}
+}
+
+type blockingSignAgent struct {
+	agent.Agent
+	started chan struct{}
+	release chan struct{}
+}
+
+func (a *blockingSignAgent) Sign(ssh.PublicKey, []byte) (*ssh.Signature, error) {
+	close(a.started)
+	<-a.release
+	return nil, errors.New("blocking test agent released")
 }
 
 var errRejectedAuth = errors.New("authentication rejected")
