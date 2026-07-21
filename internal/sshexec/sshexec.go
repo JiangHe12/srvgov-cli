@@ -152,33 +152,35 @@ func (c Client) run(
 	}
 	session.Stderr = stderr
 	session.Stdin = stdin
-	runDone := make(chan error, 1)
-	go func() {
-		runDone <- session.Run(command)
-	}()
-
-	select {
-	case <-ctx.Done():
+	contextCloseDone := make(chan struct{})
+	stopContextClose := context.AfterFunc(ctx, func() {
+		defer close(contextCloseDone)
+		_ = session.Close()
 		_ = client.Close()
-		<-runDone
-		return Result{}, apperrors.New(apperrors.CodeNetworkError, "SSH command canceled", ctx.Err())
-	case runErr := <-runDone:
-		result := Result{
-			Stdout:          stdout.String(),
-			Stderr:          stderr.String(),
-			StdoutTruncated: captureStdout && stdout.Truncated(),
-			StderrTruncated: stderr.Truncated(),
-		}
-		if runErr == nil {
-			return result, nil
-		}
-		var exitErr *ssh.ExitError
-		if errors.As(runErr, &exitErr) {
-			result.ExitCode = exitErr.ExitStatus()
-			return result, nil
-		}
-		return Result{}, apperrors.New(apperrors.CodeBackendError, "SSH command execution failed", runErr)
+	})
+	runErr := session.Run(command)
+	if stopContextClose() {
+		close(contextCloseDone)
 	}
+	<-contextCloseDone
+	if ctx.Err() != nil {
+		return Result{}, apperrors.New(apperrors.CodeNetworkError, "SSH command canceled", ctx.Err())
+	}
+	result := Result{
+		Stdout:          stdout.String(),
+		Stderr:          stderr.String(),
+		StdoutTruncated: captureStdout && stdout.Truncated(),
+		StderrTruncated: stderr.Truncated(),
+	}
+	if runErr == nil {
+		return result, nil
+	}
+	var exitErr *ssh.ExitError
+	if errors.As(runErr, &exitErr) {
+		result.ExitCode = exitErr.ExitStatus()
+		return result, nil
+	}
+	return Result{}, apperrors.New(apperrors.CodeBackendError, "SSH command execution failed", runErr)
 }
 
 func (c Client) authMethods(
