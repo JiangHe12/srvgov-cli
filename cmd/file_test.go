@@ -93,6 +93,10 @@ func TestFileCommandsClassifyAndQuotePaths(t *testing.T) {
 			}
 		})
 	}
+	statCommand := fileStatCommand(path)
+	if strings.Contains(statCommand, `\t`) || strings.Count(statCommand, "\t") != 5 {
+		t.Fatalf("fileStatCommand() separators = %q, want five literal tabs", statCommand)
+	}
 }
 
 func TestFileWriteCommandUsesFixedBoundedAtomicWrapper(t *testing.T) {

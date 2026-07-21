@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.10.1
+
+### Changed
+
+- Release builds now require a GitHub-verified signed annotated tag whose version matches `package.json`, an exact literal `CHANGELOG.md` heading, and freshly fetched `origin/main`; the complete CI/vulnerability gate and race-enabled integration tests rerun on that tag commit against a digest-pinned live OpenSSH container. Required fixtures fail closed instead of skipping. The real-backend suite covers SSH cancellation/deadlines and the core remote file read/stat/list/atomic-write paths, including size and digest rejection.
+
+### Fixed
+
+- Sent SSH `SIGTERM` before closing a canceled command session so standard OpenSSH terminates the session process group instead of leaving its ordinary shell and children running. Explicitly detached or signal-ignoring commands, forced-command configurations, and servers without compatible signaling remain documented boundaries.
+- Prevented concurrent SSH calls from racing while normalizing a shared authentication-method slice.
+- Sent literal tab delimiters to remote GNU `stat`, allowing real file metadata output to be parsed correctly.
+
 ## v0.10.0
 
 ### Added

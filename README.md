@@ -282,6 +282,7 @@ authorize its own repair.
 - **Commit-aware, fail-closed audit recovery** — audit records use authenticated v2 envelopes. An intent known not committed prevents the mutation. An outcome known not committed enters a private durable replay spool and returns `AUDIT_INCOMPLETE`; a known committed outcome is never queued again. An indeterminate append is atomically quarantined as `.indeterminate`, blocks automatic replay, and requires manual reconciliation. A mutation that already started still spools its own outcome after the marker, without attempting another audit append. Crash recovery remains at-least-once, so consumers should deduplicate by `(mutationId, phase)`.
 - **Redaction before output and before audit** — secrets never reach your terminal or the audit log. `file write` audits only a path fingerprint, byte count, and content SHA-256 — never the raw path or file content.
 - **Fingerprint-only mutation detail** — tickets, reasons, commands, targets, file paths, output, and backend error messages are not persisted as raw text. Domain-separated SHA-256 fingerprints and byte lengths preserve correlation without copying those values into audit storage.
+- **Bounded cancellation semantics** — when a running SSH command is canceled or reaches its context deadline, srvgov sends `SIGTERM` before closing the session. Standard OpenSSH applies that request to the session process group, stopping the ordinary shell and its children. A command that ignores `SIGTERM` or deliberately detaches into another session/process group, a forced-command configuration that rejects SSH signal requests, or a server without compatible process-group signaling remains outside this guarantee.
 - **Non-PTY execution**, bounded SSH capture, and no SFTP — stdout and stderr
   are each capped at 16 MiB + 1 byte. File writes are fully read into a bounded
   local buffer after authorization, verified by length and SHA-256 on the
@@ -310,6 +311,7 @@ srvgov install claude --skills     # also: codex, opencode, copilot, cursor, win
 
 ## 🔏 Trust & verification
 
+- **Verified release tags** — publication starts only from a GitHub-verified signed annotated tag that exactly matches `package.json`, `CHANGELOG.md`, and freshly fetched `origin/main`; CI and real OpenSSH integration rerun on that tag commit.
 - **Signed binaries** — every release artifact is signed with [cosign](https://github.com/sigstore/cosign) (keyless / OIDC); a signed `checksums.txt` covers all platforms.
 - **npm provenance** — published from CI via OpenID Connect with [provenance attestations](https://docs.npmjs.com/generating-provenance-statements) tying the package to this repo and workflow.
 - **Verified installs** — the npm postinstall checks the binary's SHA-256 against the signed `checksums.txt` before installing.
@@ -328,6 +330,15 @@ golangci-lint run --timeout=5m
 go vet -tags=integration ./...
 npm pack --dry-run
 ```
+
+The `integration.yml` workflow runs the integration-tagged tests under the race
+detector against a digest-pinned, ephemeral OpenSSH container. It covers SSH
+cancellation/deadlines and the core remote file read/stat/list/atomic-write
+paths, runs nightly or on demand, and is also a release gate. Real systemd
+service operations and external multi-OS VMs remain explicit manual checks.
+CI sets `SRVGOV_IT_REQUIRED=1` so missing fixture variables fail rather than
+skip; local runs without that flag still skip. The suite never connects to
+production hosts.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and the security policy in [SECURITY.md](SECURITY.md).
 

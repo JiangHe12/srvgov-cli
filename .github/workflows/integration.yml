@@ -1,22 +1,25 @@
 name: Integration
 
-# Real-backend integration test (//go:build integration), run against a live
-# OpenSSH server started on the runner. Kept SEPARATE from the push/PR CI and
-# the release pipeline so a slow container boot or a transient registry flake
-# never blocks everyday commits or a release. Runs nightly and on manual
-# dispatch only.
+# Real-backend integration tests (//go:build integration), run against a live,
+# digest-pinned OpenSSH server started on the runner. Kept separate from
+# push/PR CI, but reused as a release gate. Also runs nightly and on demand.
 
 on:
+  workflow_call: {}
   schedule:
     - cron: '0 4 * * *'   # daily 04:00 UTC
   workflow_dispatch: {}
+
+env:
+  # Digest observed in the successful v0.10.0 exact-tag integration run.
+  OPENSSH_IMAGE: docker.io/linuxserver/openssh-server@sha256:9c5e178975fcc3917853f5e37cbf135ad7deb11de504ab0f460cc81a2e1eb539
 
 permissions:
   contents: read
 
 jobs:
   integration:
-    name: real-OpenSSH integration (sshexec)
+    name: real-OpenSSH integration (transport + file)
     timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
@@ -32,15 +35,22 @@ jobs:
       - name: Start OpenSSH server
         shell: bash
         run: |
+          set -euo pipefail
           ssh-keygen -t ed25519 -N '' -f "$HOME/it_key" -q
+          pulled=0
           for i in 1 2 3; do
-            docker pull linuxserver/openssh-server:latest && break
-            echo "image pull retry $i"; sleep 5
+            if docker pull "$OPENSSH_IMAGE"; then
+              pulled=1
+              break
+            fi
+            echo "image pull attempt $i failed"
+            sleep 5
           done
+          [ "$pulled" = 1 ] || { echo "failed to pull pinned OpenSSH image"; exit 1; }
           docker run -d --name srvgov-it-sshd -p 2222:2222 \
             -e PUID=1000 -e PGID=1000 -e USER_NAME=svcgovit \
             -e PUBLIC_KEY="$(cat "$HOME/it_key.pub")" -e PASSWORD_ACCESS=false \
-            linuxserver/openssh-server:latest
+            "$OPENSSH_IMAGE"
 
       - name: Wait for sshd
         shell: bash
@@ -62,11 +72,17 @@ jobs:
       - name: Run integration test
         shell: bash
         env:
+          SRVGOV_IT_REQUIRED: '1'
           SRVGOV_IT_SSH_ADDR: 127.0.0.1:2222
           SRVGOV_IT_SSH_USER: svcgovit
         run: |
           export SRVGOV_IT_SSH_KEY="$HOME/it_key"
-          go test -tags=integration -count=1 -v ./internal/sshexec/
+          go test -race -tags=integration -count=1 -v -run '^TestIntegration' ./internal/sshexec/ ./cmd/
+
+      - name: Show OpenSSH logs on failure
+        if: failure()
+        shell: bash
+        run: docker logs --tail 100 srvgov-it-sshd || true
 
       - name: Tear down OpenSSH server
         if: always()

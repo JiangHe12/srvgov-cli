@@ -89,6 +89,23 @@ func TestContextNormalizeCanonicalizesAuthenticationOrder(t *testing.T) {
 	}
 }
 
+func TestContextNormalizeDoesNotMutateSharedAuthenticationBackingArray(t *testing.T) {
+	shared := []string{AuthPassword, AuthPrivateKey}
+	ctx := Context{
+		Host:        "example.com",
+		AuthMethods: shared,
+	}
+	if err := ctx.Normalize(); err != nil {
+		t.Fatalf("Normalize() error = %v", err)
+	}
+	if shared[0] != AuthPassword || shared[1] != AuthPrivateKey {
+		t.Fatalf("shared AuthMethods mutated to %v", shared)
+	}
+	if len(ctx.AuthMethods) != 2 || ctx.AuthMethods[0] != AuthPrivateKey || ctx.AuthMethods[1] != AuthPassword {
+		t.Fatalf("normalized AuthMethods = %v", ctx.AuthMethods)
+	}
+}
+
 func TestStoreLifecycle(t *testing.T) {
 	corectx.Configure(corectx.Options{APIVersion: SupportedContextAPIVersion, ConfigDirName: ".srvgov"})
 	t.Cleanup(func() {

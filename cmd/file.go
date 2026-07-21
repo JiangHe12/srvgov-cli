@@ -672,7 +672,7 @@ func fileReadCommand(path string, maxBytes int) string {
 }
 
 func fileStatCommand(path string) string {
-	return "stat -c '%F\\t%s\\t%a\\t%U\\t%G\\t%Y' -- " + observe.ShellQuote(path)
+	return "stat -c '%F\t%s\t%a\t%U\t%G\t%Y' -- " + observe.ShellQuote(path)
 }
 
 func fileListCommand(path string) string {

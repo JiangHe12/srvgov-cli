@@ -28,7 +28,18 @@ go vet -tags=integration ./...
 npm pack --dry-run
 ```
 
-A real-backend integration test (`//go:build integration`, env-gated on `SRVGOV_IT_SSH_*`, skipped by default) exercises `internal/sshexec` against a live OpenSSH container in the nightly `integration.yml` workflow, not on push/PR.
+A real-backend integration suite (`//go:build integration`, env-gated on
+`SRVGOV_IT_SSH_*`, skipped by default) exercises `internal/sshexec` plus the
+core file read/stat/list/atomic-write paths under the race detector against a
+digest-pinned ephemeral OpenSSH container. `integration.yml` runs nightly, on
+manual dispatch, and as a release gate, but not on push/PR. The workflow sets
+`SRVGOV_IT_REQUIRED=1`, so missing fixture variables fail instead of silently
+skipping; local runs without that flag still skip. Real systemd and external
+multi-OS VM checks remain manual and must never target production. Cancellation
+sends SSH `SIGTERM` before closing the transport; standard OpenSSH applies it to
+the session process group. Commands that detach into another session/process
+group or ignore `SIGTERM`, forced commands that reject signal requests, and
+servers without compatible signaling remain explicit boundaries.
 
 ## Governance Rules
 
@@ -94,7 +105,10 @@ Release only when explicitly authorized. To cut version `X.Y.Z`:
 2. Add an exact `## vX.Y.Z` heading to `CHANGELOG.md`.
 3. Run Build & Verify. `npm pack --dry-run` must list exactly `LICENSE`,
    `README.md`, `package.json`, `bin/srvgov-cli.js`, and `scripts/install.js`.
-4. Commit and push tag `vX.Y.Z`. The workflow tests, builds six platform
-   artifacts, injects `main.version/commit/built`, signs with cosign, publishes
-   checksums and a GitHub Release, then publishes npm through OIDC.
+4. Create a signed annotated tag `vX.Y.Z` that GitHub reports as verified, then
+   push it. The tag must match `package.json` and an exact `## vX.Y.Z`
+   changelog heading. The workflow verifies this metadata, runs unit and live
+   OpenSSH integration gates, builds six platform artifacts, injects
+   `main.version/commit/built`, signs with cosign, publishes checksums and a
+   GitHub Release, then publishes npm through OIDC.
 5. Never publish or edit release artifacts manually.

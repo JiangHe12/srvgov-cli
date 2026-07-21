@@ -79,12 +79,13 @@ func (c *Context) Normalize() error {
 			return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("unsupported SSH auth method %q", method), nil)
 		}
 	}
-	c.AuthMethods = c.AuthMethods[:0]
+	normalizedMethods := make([]string, 0, len(enabledMethods))
 	for _, method := range defaultAuthMethods {
 		if enabledMethods[method] {
-			c.AuthMethods = append(c.AuthMethods, method)
+			normalizedMethods = append(normalizedMethods, method)
 		}
 	}
+	c.AuthMethods = normalizedMethods
 	return nil
 }
 

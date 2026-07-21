@@ -155,6 +155,7 @@ func (c Client) run(
 	contextCloseDone := make(chan struct{})
 	stopContextClose := context.AfterFunc(ctx, func() {
 		defer close(contextCloseDone)
+		_ = session.Signal(ssh.SIGTERM)
 		_ = session.Close()
 		_ = client.Close()
 	})

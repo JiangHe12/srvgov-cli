@@ -25,20 +25,7 @@ import (
 )
 
 func TestIntegrationOpenSSHRealServerTOFUStdinAndShellQuoting(t *testing.T) {
-	addr := os.Getenv("SRVGOV_IT_SSH_ADDR")
-	if addr == "" {
-		t.Skip("set SRVGOV_IT_SSH_ADDR to run")
-	}
-	user := os.Getenv("SRVGOV_IT_SSH_USER")
-	if user == "" {
-		t.Fatal("set SRVGOV_IT_SSH_USER to run")
-	}
-	keyPath := os.Getenv("SRVGOV_IT_SSH_KEY")
-	if keyPath == "" {
-		t.Fatal("set SRVGOV_IT_SSH_KEY to run")
-	}
-
-	target := integrationContext(t, addr, user, keyPath)
+	target := integrationTarget(t)
 	knownHostsPath := filepath.Join(t.TempDir(), "known_hosts")
 	client := Client{KnownHostsPath: knownHostsPath, Timeout: 10 * time.Second}
 	ctx := context.Background()
@@ -138,6 +125,317 @@ func TestIntegrationOpenSSHRealServerTOFUStdinAndShellQuoting(t *testing.T) {
 	if string(afterTamper) != tampered {
 		t.Fatalf("known_hosts was overwritten after rejected host key:\nbefore=%q\nfirst-pin=%q\nafter=%q", beforeTamper, tampered, afterTamper)
 	}
+}
+
+func TestIntegrationOpenSSHRealServerCancellationAndDeadline(t *testing.T) {
+	target := integrationTarget(t)
+	client := Client{
+		KnownHostsPath: filepath.Join(t.TempDir(), "known_hosts"),
+		Timeout:        10 * time.Second,
+	}
+	probeClient := Client{
+		KnownHostsPath: filepath.Join(t.TempDir(), "probe_known_hosts"),
+		Timeout:        10 * time.Second,
+	}
+
+	tests := []struct {
+		name       string
+		newContext func() (context.Context, context.CancelFunc)
+		cancel     bool
+	}{
+		{
+			name: "explicit cancellation",
+			newContext: func() (context.Context, context.CancelFunc) {
+				return context.WithCancel(context.Background())
+			},
+			cancel: true,
+		},
+		{
+			name: "context deadline",
+			newContext: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 2*time.Second)
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			prefix := integrationName(t)
+			startedPath := "/tmp/" + prefix + "-started"
+			finishedPath := "/tmp/" + prefix + "-finished"
+			shellIdentityPath := "/tmp/" + prefix + "-shell-identity"
+			childIdentityPath := "/tmp/" + prefix + "-child-identity"
+			cleanupRemoteProcesses(
+				t,
+				probeClient,
+				target,
+				[]string{childIdentityPath, shellIdentityPath},
+				startedPath,
+				finishedPath,
+			)
+
+			script := "shell_pid=$$; shell_start=$(awk '{print $22}' \"/proc/$shell_pid/stat\") || exit 71" +
+				"; printf '%s %s\\n' \"$shell_pid\" \"$shell_start\" > " + observe.ShellQuote(shellIdentityPath) +
+				"; sleep 30 & child_pid=$!" +
+				"; child_start=$(awk '{print $22}' \"/proc/$child_pid/stat\") || exit 71" +
+				"; printf '%s %s\\n' \"$child_pid\" \"$child_start\" > " + observe.ShellQuote(childIdentityPath) +
+				"; touch -- " + observe.ShellQuote(startedPath) +
+				"; if wait \"$child_pid\"; then touch -- " + observe.ShellQuote(finishedPath) + "; fi"
+			ctx, cancel := test.newContext()
+			defer cancel()
+			outcome := make(chan error, 1)
+			go func() {
+				_, err := client.Run(ctx, "it", target, "sh -c "+observe.ShellQuote(script))
+				outcome <- err
+			}()
+
+			waitForRemotePath(t, probeClient, target, startedPath, 5*time.Second)
+			if test.cancel {
+				cancel()
+			}
+			started := time.Now()
+			select {
+			case err := <-outcome:
+				if err == nil {
+					t.Fatal("Run(long command) error = nil, want cancellation")
+				}
+				if got := apperrors.AsAppError(err).Code; got != apperrors.CodeNetworkError {
+					t.Fatalf("Run(long command) code = %s, want %s; error=%v", got, apperrors.CodeNetworkError, err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Run(long command) did not return after cancellation")
+			}
+			if elapsed := time.Since(started); elapsed > 5*time.Second {
+				t.Fatalf("Run(long command) cancellation took %s", elapsed)
+			}
+			processes := []integrationProcessIdentity{
+				readIntegrationProcessIdentity(t, probeClient, target, shellIdentityPath),
+				readIntegrationProcessIdentity(t, probeClient, target, childIdentityPath),
+			}
+			waitForRemoteProcessesExit(t, probeClient, target, processes, 5*time.Second)
+
+			probeCtx, probeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			result, err := probeClient.Run(
+				probeCtx,
+				"it",
+				target,
+				"test ! -e "+observe.ShellQuote(finishedPath),
+			)
+			probeCancel()
+			if err != nil {
+				t.Fatalf("Run(check unfinished marker) error = %v", err)
+			}
+			if result.ExitCode != 0 {
+				t.Fatalf("long command reached its completion marker after cancellation: %#v", result)
+			}
+		})
+	}
+}
+
+func TestIntegrationProcessIdentityParsing(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "valid", value: "123 456\n"},
+		{name: "missing newline", value: "123 456", wantErr: true},
+		{name: "extra field", value: "123 456 789\n", wantErr: true},
+		{name: "extra line", value: "123 456\n789 101\n", wantErr: true},
+		{name: "non-decimal pid", value: "12x 456\n", wantErr: true},
+		{name: "unsafe pid", value: "1 456\n", wantErr: true},
+		{name: "zero start time", value: "123 0\n", wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseIntegrationProcessIdentity(test.value)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("parseIntegrationProcessIdentity(%q) error = %v, wantErr %v", test.value, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func integrationTarget(t *testing.T) srvgovctx.Context {
+	t.Helper()
+	addr := os.Getenv("SRVGOV_IT_SSH_ADDR")
+	if addr == "" {
+		if os.Getenv("SRVGOV_IT_REQUIRED") == "1" {
+			t.Fatal("set SRVGOV_IT_SSH_ADDR when SRVGOV_IT_REQUIRED=1")
+		}
+		t.Skip("set SRVGOV_IT_SSH_ADDR to run")
+	}
+	user := os.Getenv("SRVGOV_IT_SSH_USER")
+	if user == "" {
+		t.Fatal("set SRVGOV_IT_SSH_USER to run")
+	}
+	keyPath := os.Getenv("SRVGOV_IT_SSH_KEY")
+	if keyPath == "" {
+		t.Fatal("set SRVGOV_IT_SSH_KEY to run")
+	}
+	return integrationContext(t, addr, user, keyPath)
+}
+
+func waitForRemotePath(
+	t *testing.T,
+	client Client,
+	target srvgovctx.Context,
+	remotePath string,
+	timeout time.Duration,
+) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		result, err := client.Run(ctx, "it", target, "test -e "+observe.ShellQuote(remotePath))
+		cancel()
+		if err == nil && result.ExitCode == 0 {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("remote path %q was not created within %s", remotePath, timeout)
+}
+
+type integrationProcessIdentity struct {
+	PID       uint64
+	StartTime uint64
+}
+
+func readIntegrationProcessIdentity(
+	t *testing.T,
+	client Client,
+	target srvgovctx.Context,
+	identityPath string,
+) integrationProcessIdentity {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	result, err := client.Run(ctx, "it", target, "cat -- "+observe.ShellQuote(identityPath))
+	if err != nil {
+		t.Fatalf("Run(read process identity %q) error = %v", identityPath, err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("Run(read process identity %q) exit = %d; stderr=%q", identityPath, result.ExitCode, result.Stderr)
+	}
+	identity, err := parseIntegrationProcessIdentity(result.Stdout)
+	if err != nil {
+		t.Fatalf("parse process identity %q: %v", identityPath, err)
+	}
+	return identity
+}
+
+func parseIntegrationProcessIdentity(value string) (integrationProcessIdentity, error) {
+	var identity integrationProcessIdentity
+	fields, err := fmt.Sscanf(value, "%d %d\n", &identity.PID, &identity.StartTime)
+	if err != nil || fields != 2 || identity.PID <= 1 || identity.StartTime == 0 ||
+		value != fmt.Sprintf("%d %d\n", identity.PID, identity.StartTime) {
+		return integrationProcessIdentity{}, fmt.Errorf("identity must be one canonical PID/starttime line")
+	}
+	return identity, nil
+}
+
+func waitForRemoteProcessesExit(
+	t *testing.T,
+	client Client,
+	target srvgovctx.Context,
+	processes []integrationProcessIdentity,
+	timeout time.Duration,
+) {
+	t.Helper()
+	command := remoteProcessesGoneCommand(processes)
+	deadline := time.Now().Add(timeout)
+	lastStatus := "matching process identity still exists"
+	for time.Now().Before(deadline) {
+		remaining := time.Until(deadline)
+		probeTimeout := time.Second
+		if remaining < probeTimeout {
+			probeTimeout = remaining
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
+		result, err := client.Run(ctx, "it", target, command)
+		cancel()
+		if err != nil {
+			lastStatus = err.Error()
+		} else if result.ExitCode == 0 {
+			return
+		} else if result.ExitCode != 1 {
+			lastStatus = fmt.Sprintf("process identity probe exited %d: %s", result.ExitCode, result.Stderr)
+		}
+		remaining = time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		delay := 25 * time.Millisecond
+		if remaining < delay {
+			delay = remaining
+		}
+		time.Sleep(delay)
+	}
+	t.Fatalf("remote processes did not exit within %s (%s)", timeout, lastStatus)
+}
+
+func remoteProcessesGoneCommand(processes []integrationProcessIdentity) string {
+	command := `process_gone() {
+	proc=$1
+	expected=$2
+	[ -e "$proc" ] || return 0
+	current=$(awk '{print $22}' "$proc" 2>/dev/null) || {
+		[ -e "$proc" ] || return 0
+		return 2
+	}
+	case "$current" in ''|*[!0-9]*) return 2 ;; esac
+	[ "$current" != "$expected" ]
+}`
+	for _, process := range processes {
+		procPath := "/proc/" + strconv.FormatUint(process.PID, 10) + "/stat"
+		command += "\nprocess_gone " + observe.ShellQuote(procPath) + " " +
+			strconv.FormatUint(process.StartTime, 10) + " || exit $?"
+	}
+	return command
+}
+
+func cleanupRemoteProcesses(
+	t *testing.T,
+	client Client,
+	target srvgovctx.Context,
+	identityPaths []string,
+	paths ...string,
+) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		command := `terminate_identity() {
+	identity_path=$1
+	[ -f "$identity_path" ] || return 0
+	pid=
+	expected=
+	extra=
+	IFS=' ' read -r pid expected extra < "$identity_path" || return 0
+	case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+	case "$expected" in ''|*[!0-9]*) return 0 ;; esac
+	[ -z "$extra" ] || return 0
+	[ "$pid" -gt 1 ] 2>/dev/null || return 0
+	[ "$expected" -gt 0 ] 2>/dev/null || return 0
+	proc=/proc/$pid/stat
+	[ -e "$proc" ] || return 0
+	current=$(awk '{print $22}' "$proc" 2>/dev/null) || return 0
+	[ "$current" = "$expected" ] || return 0
+	kill -TERM "$pid" 2>/dev/null || true
+}`
+		for _, identityPath := range identityPaths {
+			command += "\nterminate_identity " + observe.ShellQuote(identityPath)
+		}
+		command += "\nrm -f --"
+		for _, identityPath := range identityPaths {
+			command += " " + observe.ShellQuote(identityPath)
+		}
+		for _, remotePath := range paths {
+			command += " " + observe.ShellQuote(remotePath)
+		}
+		_, _ = client.Run(ctx, "it", target, command)
+	})
 }
 
 func integrationContext(t *testing.T, addr, user, keyPath string) srvgovctx.Context {
