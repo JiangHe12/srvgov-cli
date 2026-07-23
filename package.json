@@ -1,6 +1,6 @@
 {
   "name": "srvgov-cli",
-  "version": "0.10.3",
+  "version": "0.10.4",
   "description": "Governed remote server command execution CLI for AI agents",
   "bin": {
     "srvgov": "bin/srvgov-cli.js",
@@ -32,7 +32,7 @@
   "binaryManifest": {
     "schema": 1,
     "repository": "JiangHe12/srvgov-cli",
-    "version": "0.10.3",
+    "version": "0.10.4",
     "binaries": {}
   },
   "homepage": "https://github.com/JiangHe12/srvgov-cli",

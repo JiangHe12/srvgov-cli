@@ -95,15 +95,15 @@ func TestExecRequiredReadAuditIntentFailureBlocksSSH(t *testing.T) {
 	}
 }
 
-func TestExecRequiredReadAuditOutcomeFailureWithholdsResult(t *testing.T) {
+func TestExecRequiredReadAuditOutcomeFailureWithholdsResultButReportsPersistedTOFUPin(t *testing.T) {
 	configPath := prepareExecContext(t, false)
 	runner := &fakeSSHRunner{result: sshexec.Result{Stdout: "must-not-be-released\n"}}
 	previous := newSSHRunner
 	newSSHRunner = func(notify func(sshexec.Pin)) sshRunner {
 		notify(sshexec.Pin{
-			Address:     "must-not-be-released.example:22",
+			Address:     "persisted-pin.example:22",
 			KeyType:     "ssh-ed25519",
-			Fingerprint: "SHA256:must-not-be-released",
+			Fingerprint: "SHA256:persisted-pin",
 		})
 		return runner
 	}
@@ -138,9 +138,17 @@ func TestExecRequiredReadAuditOutcomeFailureWithholdsResult(t *testing.T) {
 	if appendCalls != 2 {
 		t.Fatalf("audit append calls = %d, want intent and outcome", appendCalls)
 	}
-	if stdout.Len() != 0 || strings.Contains(stderr.String(), "must-not-be-released") ||
-		strings.Contains(stderr.String(), "pinned SSH host key") {
+	if stdout.Len() != 0 || strings.Contains(stderr.String(), "must-not-be-released") {
 		t.Fatalf("read result was released: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	for _, value := range []string{
+		"pinned SSH host key",
+		`"persisted-pin.example:22"`,
+		"SHA256:persisted-pin",
+	} {
+		if !strings.Contains(stderr.String(), value) {
+			t.Fatalf("persisted TOFU pin notice %q does not contain %q", stderr.String(), value)
+		}
 	}
 }
 

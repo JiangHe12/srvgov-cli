@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+## v0.10.4
+
+### Fixed
+
+- Updated `opskit-core/v2` to v2.0.3. A strict-TOFU first-use pin that committed
+  before a later durability error is now reported exactly once even when the
+  governed read outcome cannot be persisted. Remote command or file output
+  remains withheld on audit failure.
+- Restored Node.js 14 compatibility in the npm installer without changing its
+  provenance or atomic-install checks.
+
 ## v0.10.3
 
 ### Security

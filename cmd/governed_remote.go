@@ -214,7 +214,7 @@ func runGovernedCommand(
 			srvgovaudit.StatusFailed,
 			runErr,
 		)
-		releaseDeferredTOFUNotices(deferredNotices, finishErr)
+		releaseDeferredTOFUNotices(deferredNotices)
 		return governedReadResult(sshexec.Result{}, risk, finishErr)
 	}
 
@@ -235,7 +235,7 @@ func runGovernedCommand(
 			srvgovaudit.StatusFailed,
 			resultErr,
 		)
-		releaseDeferredTOFUNotices(deferredNotices, finishErr)
+		releaseDeferredTOFUNotices(deferredNotices)
 		return governedReadResult(result, risk, finishErr)
 	}
 
@@ -258,14 +258,15 @@ func runGovernedCommand(
 		srvgovaudit.StatusSucceeded,
 		nil,
 	); finishErr != nil {
+		releaseDeferredTOFUNotices(deferredNotices)
 		return governedReadResult(result, risk, finishErr)
 	}
 	deferredNotices.flush()
 	return result, risk, outputErr
 }
 
-func releaseDeferredTOFUNotices(notices *deferredTOFUNotices, readErr error) {
-	if notices != nil && !errors.Is(readErr, errRequiredReadAudit) {
+func releaseDeferredTOFUNotices(notices *deferredTOFUNotices) {
+	if notices != nil {
 		notices.flush()
 	}
 }

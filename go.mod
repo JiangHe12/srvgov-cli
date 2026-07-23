@@ -14,7 +14,7 @@ require (
 
 require (
 	filippo.io/hpke v0.4.0 // indirect
-	github.com/JiangHe12/opskit-core/v2 v2.0.2
+	github.com/JiangHe12/opskit-core/v2 v2.0.3
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
