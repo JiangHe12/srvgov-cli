@@ -171,7 +171,8 @@ func TestVerifyOrPinRejectsSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target_known_hosts")
 	path := filepath.Join(dir, "known_hosts")
-	if err := os.WriteFile(target, nil, 0o600); err != nil {
+	const original = "referent-must-not-change"
+	if err := os.WriteFile(target, []byte(original), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	if err := os.Symlink(target, path); err != nil {
@@ -182,8 +183,25 @@ func TestVerifyOrPinRejectsSymlink(t *testing.T) {
 	if err == nil {
 		t.Fatal("verifyOrPin() error = nil, want symlink rejection")
 	}
-	if !strings.Contains(err.Error(), "SSH host-key pin path must be a regular file") {
-		t.Fatalf("verifyOrPin() error = %v", err)
+	if got := apperrors.AsAppError(err).Code; got != apperrors.CodeLocalIOError {
+		t.Fatalf("verifyOrPin() code = %s, want %s; error = %v", got, apperrors.CodeLocalIOError, err)
+	}
+	if !strings.Contains(err.Error(), "failed to open secure file") {
+		t.Fatalf("verifyOrPin() error = %v, want no-follow open rejection", err)
+	}
+	info, statErr := os.Lstat(path)
+	if statErr != nil {
+		t.Fatalf("Lstat() error = %v", statErr)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("pin path mode = %v, want symlink unchanged", info.Mode())
+	}
+	data, readErr := os.ReadFile(target)
+	if readErr != nil {
+		t.Fatalf("ReadFile(target) error = %v", readErr)
+	}
+	if string(data) != original {
+		t.Fatalf("target = %q, want %q", data, original)
 	}
 }
 

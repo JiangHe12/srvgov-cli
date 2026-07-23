@@ -334,8 +334,11 @@ func TestLegacyLoadRejectsInsecurePermissionsWithoutWriting(t *testing.T) {
 	SetConfigPath(configPath)
 
 	_, err := Load()
-	if got := apperrors.AsAppError(err).Code; got != apperrors.CodeAuthFailed {
-		t.Fatalf("Load() code = %s, want %s; error = %v", got, apperrors.CodeAuthFailed, err)
+	if got := apperrors.AsAppError(err).Code; got != apperrors.CodeLocalIOError {
+		t.Fatalf("Load() code = %s, want %s; error = %v", got, apperrors.CodeLocalIOError, err)
+	}
+	if !strings.Contains(err.Error(), "secure file has mode 0644; want 0600") {
+		t.Fatalf("Load() error = %v, want insecure mode rejection", err)
 	}
 	unchanged, readErr := os.ReadFile(configPath)
 	if readErr != nil {
