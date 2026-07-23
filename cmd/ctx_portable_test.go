@@ -9,7 +9,9 @@ import (
 
 	"github.com/JiangHe12/opskit-core/v2/apperrors"
 	"github.com/JiangHe12/opskit-core/v2/credstore"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
+	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
 )
 
@@ -29,6 +31,13 @@ func TestContextExportRedactsCredentialsAndImportRequiresR3Authorization(t *test
 	if count := strings.Count(exported, redactedCredential); count != 2 {
 		t.Fatalf("redacted count = %d; export:\n%s", count, exported)
 	}
+	requireReadAuditPairs(
+		t,
+		readAuditEvents(t),
+		string(srvgovaudit.EventTypeContextExport),
+		"R0",
+		1,
+	)
 
 	file := filepath.Join(t.TempDir(), "ctx.yaml")
 	if err := os.WriteFile(file, []byte(exported), 0o600); err != nil {
@@ -90,6 +99,53 @@ func TestContextExportDisablesPlaintextCredentialsAndPreservesRefs(t *testing.T)
 	}
 	if strings.Contains(included, "login-secret") {
 		t.Fatalf("include-credentials error leaked literal credential: %q", included)
+	}
+}
+
+func TestContextExportEnforcesTargetRBACAndProtectedRisk(t *testing.T) {
+	configPath := isolatedContextConfig(t)
+	operator, err := trustedOperator(&cliFlags{})
+	if err != nil {
+		t.Fatalf("trustedOperator() error = %v", err)
+	}
+	item := testServerContext("example.com")
+	item.Roles = map[string]string{"another-operator": safety.RoleReader}
+	mustSetContext(t, configPath, "restricted", item)
+
+	output, err := executeRoot(t, configPath, "ctx", "export", "restricted")
+	assertAppError(t, err, apperrors.CodeAuthorizationRequired, 8)
+	if output != "" {
+		t.Fatalf("denied export output = %q, want empty", output)
+	}
+	outcomes := requireReadAuditPairs(
+		t,
+		readAuditEvents(t),
+		string(srvgovaudit.EventTypeContextExport),
+		"R0",
+		1,
+	)
+	if outcomes[0].Status != srvgovaudit.StatusFailed ||
+		outcomes[0].Error == nil ||
+		outcomes[0].Error.Code != string(apperrors.CodeAuthorizationRequired) {
+		t.Fatalf("denied export outcome = %#v", outcomes[0])
+	}
+
+	item.Protected = true
+	item.Roles = map[string]string{operator: safety.RoleReader}
+	mustSetContext(t, configPath, "protected", item)
+	output, err = executeRoot(
+		t,
+		configPath,
+		"--non-interactive",
+		"ctx",
+		"export",
+		"protected",
+	)
+	if err != nil {
+		t.Fatalf("protected R0 export error = %v", err)
+	}
+	if !strings.Contains(output, "name: protected") {
+		t.Fatalf("protected export output = %q", output)
 	}
 }
 

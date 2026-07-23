@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -97,10 +98,19 @@ func runAuditQuery(f *cliFlags, opts auditQueryOptions) error {
 		emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), err)
 		return err
 	}
+	auditHandle, err := beginRequiredLocalReadAudit(
+		f,
+		"",
+		path,
+		string(srvgovaudit.EventTypeAuditQuery),
+		srvgovaudit.EventTypeAuditQuery,
+	)
+	if err != nil {
+		return err
+	}
 	raw, err := coreaudit.QueryRaw(path, filter)
 	if err != nil {
-		emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), err)
-		return err
+		return finishRequiredLocalReadAudit(auditHandle, err)
 	}
 	result := auditQueryResult{Events: []srvgovaudit.Event{}, Malformed: raw.MalformedEntries}
 	for _, record := range raw.Records {
@@ -121,7 +131,9 @@ func runAuditQuery(f *cliFlags, opts auditQueryOptions) error {
 	if opts.limit > 0 && len(result.Events) > opts.limit {
 		result.Events = result.Events[:opts.limit]
 	}
-	emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditQuery), nil)
+	if err := finishRequiredLocalReadAudit(auditHandle, nil); err != nil {
+		return err
+	}
 	return printAuditQuery(f, result)
 }
 
@@ -134,21 +146,32 @@ func runAuditVerify(f *cliFlags, opts auditVerifyOptions) error {
 		emitAudit(f, auditCommandEvent(f, srvgovaudit.EventTypeAuditVerify), err)
 		return err
 	}
+	auditHandle, err := beginRequiredLocalReadAudit(
+		f,
+		"",
+		path,
+		string(srvgovaudit.EventTypeAuditVerify),
+		srvgovaudit.EventTypeAuditVerify,
+	)
+	if err != nil {
+		return err
+	}
 	result, err := coreaudit.Verify(path, coreaudit.VerifyOptions{
 		Decrypt:    true,
 		PrivateKey: os.Getenv(srvgovAuditPrivateKeyEnv),
 	})
 	strictErr := strictVerifyError(result, opts.strict)
-	event := auditCommandEvent(f, srvgovaudit.EventTypeAuditVerify)
 	if err != nil {
-		emitAudit(f, event, err)
-		return err
+		return finishRequiredLocalReadAudit(auditHandle, err)
 	}
-	emitAudit(f, event, strictErr)
+	finishErr := finishRequiredLocalReadAudit(auditHandle, strictErr)
+	if errors.Is(finishErr, errRequiredReadAudit) {
+		return finishErr
+	}
 	if printErr := printAuditVerify(f, result); printErr != nil {
 		return printErr
 	}
-	return strictErr
+	return finishErr
 }
 
 func auditPath(path string) (string, error) {

@@ -147,11 +147,9 @@ func TestFileReadTruncatesAndRedacts(t *testing.T) {
 		t.Fatalf("read = %#v; output = %s", got, output)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 1 || events[0].EventType != srvgovaudit.EventTypeFileRead || events[0].RiskTier != "R0" {
-		t.Fatalf("audit events = %#v", events)
-	}
-	if strings.Contains(events[0].Stdout, "content-secret") || strings.Contains(events[0].Command, "path-secret") {
-		t.Fatalf("audit leaked read secret: %#v", events[0])
+	outcomes := requireReadAuditPairs(t, events, string(srvgovaudit.EventTypeFileRead), "R0", 1)
+	if strings.Contains(outcomes[0].Stdout, "content-secret") || strings.Contains(outcomes[0].Command, "path-secret") {
+		t.Fatalf("audit leaked read secret: %#v", outcomes[0])
 	}
 }
 
@@ -511,10 +509,8 @@ func TestFileWriteDryRunResolvesParentBeforeClassifying(t *testing.T) {
 		t.Fatalf("stdin reads = %d; mutation calls = %d", stdin.reads, stdinRunner.calls)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 2 {
-		t.Fatalf("audit events = %#v", events)
-	}
-	for _, event := range events {
+	outcomes := requireReadAuditPairs(t, events, string(srvgovaudit.EventTypeFileStat), "R0", 2)
+	for _, event := range outcomes {
 		if event.EventType != srvgovaudit.EventTypeFileStat || event.RiskTier != "R0" {
 			t.Fatalf("preflight audit event = %#v", event)
 		}
@@ -561,10 +557,8 @@ func TestFileWriteFanoutDryRunShowsEachResolvedTargetRisk(t *testing.T) {
 		t.Fatalf("preflight commands = %#v; stdin reads = %d", runner.commands, stdin.reads)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 4 {
-		t.Fatalf("audit events = %#v", events)
-	}
-	for _, event := range events {
+	outcomes := requireReadAuditPairs(t, events, string(srvgovaudit.EventTypeFileStat), "R0", 4)
+	for _, event := range outcomes {
 		if event.EventType != srvgovaudit.EventTypeFileStat || event.RiskTier != "R0" {
 			t.Fatalf("preflight audit event = %#v", event)
 		}

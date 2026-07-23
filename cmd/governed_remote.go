@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -39,7 +40,7 @@ func runGovernedCommandWithStdin(
 	}
 	if risk.Effective >= safety.R1 && strings.TrimSpace(reason) == "" {
 		reasonErr := missingReasonError(risk.Effective)
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, policyCommand, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", reasonErr, false, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecDeniedAudit(f, item, contextName, operator, f.Ticket, reason, policyCommand, risk.Effective, reasonErr)
 		return sshexec.Result{}, reasonErr
 	}
 
@@ -56,7 +57,7 @@ func runGovernedCommandWithStdin(
 		Operator:           operator,
 	})
 	if authErr != nil {
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, policyCommand, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, false, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecDeniedAudit(f, item, contextName, operator, f.Ticket, reason, policyCommand, risk.Effective, authErr)
 		return sshexec.Result{}, authErr
 	}
 
@@ -149,7 +150,7 @@ func runGovernedCommand(
 	}
 	if risk.Effective >= safety.R1 && strings.TrimSpace(reason) == "" {
 		reasonErr := missingReasonError(risk.Effective)
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", reasonErr, false, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecDeniedAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, reasonErr)
 		return sshexec.Result{}, risk, reasonErr
 	}
 
@@ -166,12 +167,13 @@ func runGovernedCommand(
 		Operator:           operator,
 	})
 	if authErr != nil {
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusDenied, 0, "", "", authErr, false, srvgovaudit.EventTypeAuthorizationDenied)
+		appendExecDeniedAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, authErr)
 		return sshexec.Result{}, risk, authErr
 	}
 
 	mutation := isRemoteMutation(eventType, risk.Base)
 	var auditHandle *mutationAuditHandle
+	var readAuditHandle *requiredReadAuditHandle
 	if mutation {
 		auditHandle, err = beginRemoteMutationAudit(
 			f,
@@ -185,15 +187,35 @@ func runGovernedCommand(
 		if err != nil {
 			return sshexec.Result{}, risk, err
 		}
+	} else {
+		readAuditHandle, err = beginRequiredReadAudit(
+			f,
+			item,
+			contextName,
+			operator,
+			command,
+			risk.Effective,
+			eventType,
+		)
+		if err != nil {
+			return sshexec.Result{}, risk, err
+		}
 	}
-	result, runErr := newSSHRunner(tofuNotice(f)).Run(cmd.Context(), contextName, item, command)
+	notifyTOFU, deferredNotices := governedTOFUNotifier(f, mutation)
+	result, runErr := newSSHRunner(notifyTOFU).Run(cmd.Context(), contextName, item, command)
 	if runErr != nil {
 		if mutation {
 			uncertainErr := uncertainRemoteMutationError(runErr)
 			return sshexec.Result{}, risk, finishRemoteMutationAudit(auditHandle, nil, uncertainErr, true, false)
 		}
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, 0, "", "", runErr, false, eventType)
-		return sshexec.Result{}, risk, runErr
+		finishErr := finishRequiredReadAudit(
+			readAuditHandle,
+			sshexec.Result{},
+			srvgovaudit.StatusFailed,
+			runErr,
+		)
+		releaseDeferredTOFUNotices(deferredNotices, finishErr)
+		return governedReadResult(sshexec.Result{}, risk, finishErr)
 	}
 
 	if result.ExitCode != 0 {
@@ -207,8 +229,14 @@ func runGovernedCommand(
 				sshOutputIncomplete(result),
 			)
 		}
-		appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusFailed, result.ExitCode, result.Stdout, result.Stderr, resultErr, sshOutputIncomplete(result), eventType)
-		return result, risk, resultErr
+		finishErr := finishRequiredReadAudit(
+			readAuditHandle,
+			result,
+			srvgovaudit.StatusFailed,
+			resultErr,
+		)
+		releaseDeferredTOFUNotices(deferredNotices, finishErr)
+		return governedReadResult(result, risk, finishErr)
 	}
 
 	outputErr := sshOutputLimitError(result, mutation)
@@ -224,8 +252,33 @@ func runGovernedCommand(
 		}
 		return result, risk, outputErr
 	}
-	appendExecAudit(f, item, contextName, operator, f.Ticket, reason, command, risk.Effective, srvgovaudit.StatusSucceeded, result.ExitCode, result.Stdout, result.Stderr, nil, sshOutputIncomplete(result), eventType)
+	if finishErr := finishRequiredReadAudit(
+		readAuditHandle,
+		result,
+		srvgovaudit.StatusSucceeded,
+		nil,
+	); finishErr != nil {
+		return governedReadResult(result, risk, finishErr)
+	}
+	deferredNotices.flush()
 	return result, risk, outputErr
+}
+
+func releaseDeferredTOFUNotices(notices *deferredTOFUNotices, readErr error) {
+	if notices != nil && !errors.Is(readErr, errRequiredReadAudit) {
+		notices.flush()
+	}
+}
+
+func governedReadResult(
+	result sshexec.Result,
+	risk governedRisk,
+	err error,
+) (sshexec.Result, governedRisk, error) {
+	if errors.Is(err, errRequiredReadAudit) {
+		result = sshexec.Result{}
+	}
+	return result, risk, err
 }
 
 func sshOutputLimitError(result sshexec.Result, mutation bool) error {

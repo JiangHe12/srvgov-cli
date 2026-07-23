@@ -46,11 +46,9 @@ func TestSvcStatusUsesGovernedR0CommandAndRedacts(t *testing.T) {
 		t.Fatalf("status = %#v", got)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 1 || events[0].EventType != srvgovaudit.EventTypeSvcStatus || events[0].RiskTier != "R0" {
-		t.Fatalf("audit events = %#v", events)
-	}
-	if strings.Contains(events[0].Stdout, "service-secret") {
-		t.Fatalf("audit leaked service secret: %#v", events[0])
+	outcomes := requireReadAuditPairs(t, events, string(srvgovaudit.EventTypeSvcStatus), "R0", 1)
+	if strings.Contains(outcomes[0].Stdout, "service-secret") {
+		t.Fatalf("audit leaked service secret: %#v", outcomes[0])
 	}
 }
 

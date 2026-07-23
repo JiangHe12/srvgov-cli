@@ -631,9 +631,9 @@ func TestExecFanoutSortsDeduplicatesRedactsAndAuditsEachTarget(t *testing.T) {
 		t.Fatalf("output leaked secret: %s", output)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 2 ||
-		events[0].Target.Fingerprint == "" ||
-		events[0].Target.Fingerprint == events[1].Target.Fingerprint {
+	outcomes := requireReadAuditPairs(t, events, string(srvgovaudit.EventTypeExecRun), "R0", 2)
+	if outcomes[0].Target.Fingerprint == "" ||
+		outcomes[0].Target.Fingerprint == outcomes[1].Target.Fingerprint {
 		t.Fatalf("audit events = %#v, want one event per target", events)
 	}
 }
@@ -760,10 +760,8 @@ func TestLogsFanoutSelectorUsesReadOnlyCapAndAuditsEachTarget(t *testing.T) {
 		t.Fatalf("commands = %#v, want %#v", commands, wantCommands)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 2 {
-		t.Fatalf("audit events = %#v", events)
-	}
-	for _, event := range events {
+	outcomes := requireReadAuditPairs(t, events, string(srvgovaudit.EventTypeLogsObserve), "R0", 2)
+	for _, event := range outcomes {
 		if event.EventType != srvgovaudit.EventTypeLogsObserve || event.RiskTier != "R0" {
 			t.Fatalf("audit event = %#v", event)
 		}
@@ -796,9 +794,7 @@ func TestLogsFanoutContinuesAfterTargetFailure(t *testing.T) {
 		t.Fatalf("commands = %#v, want both targets attempted", runner.commands)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 2 {
-		t.Fatalf("audit events = %#v", events)
-	}
+	requireReadAuditPairs(t, events, string(srvgovaudit.EventTypeLogsObserve), "R0", 2)
 }
 
 func prepareFanoutContexts(t *testing.T) string {

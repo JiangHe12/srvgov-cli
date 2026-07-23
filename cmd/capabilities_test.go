@@ -33,7 +33,8 @@ func TestCapabilitiesReflectSrvGovSurface(t *testing.T) {
 	if !got.Supported.Governance.DryRun || got.Supported.Governance.TOFU == "" || got.Supported.Governance.Redaction == "" {
 		t.Fatalf("governance = %#v", got.Supported.Governance)
 	}
-	if !strings.Contains(got.Supported.Governance.Audit, "--allow-audit-prune") {
+	if !strings.Contains(got.Supported.Governance.Audit, "read outcome before result release") ||
+		!strings.Contains(got.Supported.Governance.Audit, "--allow-audit-prune") {
 		t.Fatalf("audit governance = %q", got.Supported.Governance.Audit)
 	}
 	if !strings.Contains(got.Supported.Governance.Fanout, "persist a batch intent before any execution") {

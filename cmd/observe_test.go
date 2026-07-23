@@ -81,10 +81,14 @@ func TestStatusRunsIndependentGovernedProbesAndRedacts(t *testing.T) {
 		}
 	}
 	events := readAuditEvents(t)
-	if len(events) != len(runner.commands) {
-		t.Fatalf("audit count = %d, want %d", len(events), len(runner.commands))
-	}
-	for _, event := range events {
+	outcomes := requireReadAuditPairs(
+		t,
+		events,
+		string(srvgovaudit.EventTypeStatusObserve),
+		"R0",
+		len(runner.commands),
+	)
+	for _, event := range outcomes {
 		if event.EventType != srvgovaudit.EventTypeStatusObserve || event.RiskTier != "R0" {
 			t.Fatalf("audit event = %#v", event)
 		}

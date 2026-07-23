@@ -360,12 +360,12 @@ func TestExecRemoteNonzeroReturnsBackendErrorAfterResult(t *testing.T) {
 		t.Fatalf("result = %#v", got)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 1 ||
-		events[0].Status != srvgovaudit.StatusFailed ||
-		events[0].ExitCode != 23 ||
-		!events[0].OutputIncomplete ||
-		events[0].Error == nil ||
-		events[0].Error.Code != string(apperrors.CodeBackendError) {
+	outcomes := requireReadAuditPairs(t, events, string(srvgovaudit.EventTypeExecRun), "R0", 1)
+	if outcomes[0].Status != srvgovaudit.StatusFailed ||
+		outcomes[0].ExitCode != 23 ||
+		!outcomes[0].OutputIncomplete ||
+		outcomes[0].Error == nil ||
+		outcomes[0].Error.Code != string(apperrors.CodeBackendError) {
 		t.Fatalf("audit events = %#v", events)
 	}
 }

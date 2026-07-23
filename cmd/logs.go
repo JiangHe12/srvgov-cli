@@ -163,7 +163,15 @@ func collectJournalLogs(
 	command := observe.JournalCommand(opts)
 	result, _, err := runGovernedCommand(cmd, f, item, contextName, command, "", false, srvgovaudit.EventTypeLogsObserve)
 	if err == nil {
-		return observe.ParseJournal(result.Stdout), "journalctl", nil
+		lines, parseErr := observe.ParseJournal(result.Stdout)
+		if parseErr != nil {
+			return nil, "", apperrors.New(
+				apperrors.CodeValidationFailed,
+				"unable to parse journalctl output",
+				parseErr,
+			)
+		}
+		return lines, "journalctl", nil
 	}
 	if !commandUnavailable(result) {
 		return nil, "", err
@@ -202,7 +210,15 @@ func collectTextLogs(
 ) ([]observe.LogLine, string, error) {
 	result, _, err := runGovernedCommand(cmd, f, item, contextName, command, "", false, srvgovaudit.EventTypeLogsObserve)
 	if err == nil {
-		return observe.ParseFileLines(result.Stdout, grep), backend, nil
+		lines, parseErr := observe.ParseFileLines(result.Stdout, grep)
+		if parseErr != nil {
+			return nil, "", apperrors.New(
+				apperrors.CodeValidationFailed,
+				"unable to parse "+backend+" output",
+				parseErr,
+			)
+		}
+		return lines, backend, nil
 	}
 	if commandUnavailable(result) {
 		return nil, "", apperrors.New(apperrors.CodeResourceNotFound, missingMessage, nil)

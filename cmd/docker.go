@@ -291,7 +291,14 @@ func runDockerTarget(
 		if runErr != nil {
 			return nil, runErr
 		}
-		lines := observe.ParseDockerLines(result.Stdout, result.Stderr)
+		lines, parseErr := observe.ParseDockerLines(result.Stdout, result.Stderr)
+		if parseErr != nil {
+			return nil, apperrors.New(
+				apperrors.CodeValidationFailed,
+				"unable to parse docker logs output",
+				parseErr,
+			)
+		}
 		return dockerLogsView{
 			Lines: lines,
 			Meta: dockerLogsMeta{
@@ -345,7 +352,14 @@ func runDockerLogs(cmd *cobra.Command, f *cliFlags, container string, tail int) 
 	if err != nil {
 		return err
 	}
-	lines := observe.ParseDockerLines(result.Stdout, result.Stderr)
+	lines, parseErr := observe.ParseDockerLines(result.Stdout, result.Stderr)
+	if parseErr != nil {
+		return apperrors.New(
+			apperrors.CodeValidationFailed,
+			"unable to parse docker logs output",
+			parseErr,
+		)
+	}
 	return printDockerLogs(f, dockerLogsView{
 		Lines: lines,
 		Meta: dockerLogsMeta{

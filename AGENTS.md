@@ -45,6 +45,9 @@ servers without compatible signaling remain explicit boundaries.
 
 - R0 is free but audited. R1 needs `--reason` and `--yes`. R2 also needs a
   non-empty `--ticket`. R3 also needs `--allow-destructive`.
+- Governed R0 reads persist an intent before backend access and an outcome
+  before result release. A required audit failure returns `LOCAL_IO_ERROR` and
+  withholds backend output.
 - Context create/replace/selection/import/credential migration, context
   deletion, and role changes are always R3 and require their precise
   `--allow-context-change`, `--allow-context-delete`, or

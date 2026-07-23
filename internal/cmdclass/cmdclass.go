@@ -2,6 +2,7 @@
 package cmdclass
 
 import (
+	"net/url"
 	"path"
 	"strings"
 	"unicode"
@@ -209,18 +210,9 @@ func classifyWords(words []string) safety.Risk {
 	case "journalctl":
 		return classifyJournalctl(words[1:])
 	case "curl":
-		if curlUploads(words[1:]) {
-			return safety.R3
-		}
-		return safety.R2
+		return classifyCurl(words[1:])
 	case "wget":
-		if hasOptionPrefix(words[1:], "--post-", "--body-") {
-			return safety.R3
-		}
-		if target, ok := wgetOutputTarget(words[1:]); ok && isSensitiveWriteTarget(target) {
-			return safety.R3
-		}
-		return safety.R2
+		return classifyWget(words[1:])
 	case "find":
 		if hasAnyWord(words[1:], "-exec", "-execdir", "-delete", "-ok", "-okdir") {
 			return safety.R3
@@ -806,67 +798,638 @@ func isSensitiveWriteTarget(value string) bool {
 	if strings.HasPrefix(cleaned, "~/") {
 		cleaned = "/home/~/" + strings.TrimPrefix(cleaned, "~/")
 	}
-	if strings.Contains(cleaned, "/.ssh/") || strings.HasSuffix(cleaned, "/.ssh") {
+	if cleaned == ".ssh" || strings.HasPrefix(cleaned, ".ssh/") ||
+		strings.Contains(cleaned, "/.ssh/") || strings.HasSuffix(cleaned, "/.ssh") {
 		return true
 	}
 	base := path.Base(cleaned)
 	switch base {
-	case "authorized_keys", ".bashrc", ".profile", ".bash_profile", ".zshrc", "crontab":
+	case "authorized_keys", ".bashrc", ".profile", ".bash_profile", ".zshrc", ".ssh",
+		"cron", "cron.d", "crontab":
 		return true
 	}
 	return cleaned == "/var/spool/cron" || strings.HasPrefix(cleaned, "/var/spool/cron/")
 }
 
-func curlUploads(args []string) bool {
-	for _, arg := range args {
-		if strings.HasPrefix(arg, "--") {
-			lower := strings.ToLower(arg)
-			for _, option := range []string{
-				"--upload-file", "--form", "--data", "--data-ascii", "--data-binary",
-				"--data-raw", "--data-urlencode", "--json",
-			} {
-				if lower == option || strings.HasPrefix(lower, option+"=") {
-					return true
-				}
+//nolint:gocyclo // Structured fail-closed option parsing is intentionally explicit.
+func classifyCurl(args []string) safety.Risk {
+	configDisabled := curlConfigDisabled(args)
+	parseOptions := true
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !parseOptions {
+			if !isSafeTransferURL(arg, "http", "https", "ftp", "ftps") {
+				return safety.R3
 			}
 			continue
 		}
-		if strings.HasPrefix(arg, "-") && len(arg) > 1 {
-			flags := strings.TrimPrefix(arg, "-")
-			if strings.ContainsRune(flags, 'T') || strings.ContainsRune(flags, 'F') || strings.ContainsRune(flags, 'd') {
-				return true
+		if arg == "--" {
+			parseOptions = false
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			risk, next := classifyCurlLongOption(args, i)
+			if risk == safety.R3 {
+				return safety.R3
 			}
+			i = next
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			risk, next := classifyCurlShortOption(args, i)
+			if risk == safety.R3 {
+				return safety.R3
+			}
+			i = next
+			continue
+		}
+		if !isSafeTransferURL(arg, "http", "https", "ftp", "ftps") {
+			return safety.R3
 		}
 	}
-	return false
+	if !configDisabled {
+		return safety.R3
+	}
+	return safety.R2
 }
 
-func wgetOutputTarget(args []string) (string, bool) {
-	for i, arg := range args {
-		switch {
-		case arg == "-O" || arg == "--output-document":
-			if i+1 >= len(args) {
-				return "", true
+//nolint:gocyclo // Every accepted curl long option is intentionally visible in this fail-closed inventory.
+func classifyCurlLongOption(args []string, index int) (safety.Risk, int) {
+	name, inlineValue, hasInlineValue := splitLongOption(args[index])
+	if name == "--next" {
+		if hasInlineValue {
+			return safety.R3, index
+		}
+		return safety.R2, index
+	}
+
+	if strings.HasPrefix(name, "--expand-") || hasExactWord(
+		name,
+		"--config", "--upload-file", "--form", "--form-string",
+		"--data", "--data-ascii", "--data-binary", "--data-raw", "--data-urlencode", "--json",
+		"--quote", "--prequote", "--postquote",
+		"--remote-name", "--remote-name-all", "--remote-header-name",
+		"--create-dirs", "--remove-on-error", "--metalink",
+		"--variable", "--netrc", "--netrc-file", "--netrc-optional",
+		"--cert", "--cert-type", "--key", "--key-type", "--pass",
+		"--delegation", "--engine", "--egd-file", "--random-file",
+		"--location-trusted", "--ftp-create-dirs", "--ftp-port",
+		"--ftp-alternative-to-user", "--mail-auth", "--mail-from", "--mail-rcpt",
+		"--ssl-auto-client-cert", "--telnet-option",
+		"--proto", "--proto-default", "--proto-redir",
+	) {
+		return safety.R3, index
+	}
+
+	switch name {
+	case "--request":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || !isReadOnlyHTTPMethod(value) {
+			return safety.R3, index
+		}
+		return safety.R2, next
+	case "--output", "--output-dir", "--cookie-jar", "--dump-header",
+		"--trace", "--trace-ascii", "--stderr", "--etag-save", "--alt-svc",
+		"--hsts", "--libcurl":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || isUnsafeOutputTarget(value) {
+			return safety.R3, index
+		}
+		return safety.R2, next
+	case "--write-out":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || classifyCurlWriteOut(value) == safety.R3 {
+			return safety.R3, index
+		}
+		return safety.R2, next
+	case "--header", "--proxy-header":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || classifyHTTPHeader(value) == safety.R3 {
+			return safety.R3, index
+		}
+		return safety.R2, next
+	case "--cookie":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || curlCookieReadsFile(value) {
+			return safety.R3, index
+		}
+		return safety.R2, next
+	case "--url-query":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || curlQueryReadsFile(value) {
+			return safety.R3, index
+		}
+		return safety.R2, next
+	case "--url":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || !isSafeTransferURL(value, "http", "https", "ftp", "ftps") {
+			return safety.R3, index
+		}
+		return safety.R2, next
+	}
+
+	if hasExactWord(
+		name,
+		"--anyauth", "--append", "--basic", "--ca-native", "--compressed",
+		"--compressed-ssh", "--crlf", "--digest", "--disable",
+		"--disable-eprt", "--disable-epsv", "--disallow-username-in-url",
+		"--doh-cert-status", "--doh-insecure", "--fail", "--fail-early",
+		"--fail-with-body", "--false-start", "--ftp-ccc", "--ftp-pasv",
+		"--ftp-pret", "--ftp-skip-pasv-ip", "--ftp-ssl-ccc",
+		"--ftp-ssl-control", "--get", "--globoff", "--head",
+		"--haproxy-protocol",
+		"--help", "--http0.9", "--http1.0", "--http1.1", "--http2",
+		"--http2-prior-knowledge", "--http3", "--http3-only",
+		"--ignore-content-length", "--include", "--insecure", "--ipv4",
+		"--ipv6", "--junk-session-cookies", "--list-only", "--location",
+		"--manual", "--negotiate", "--no-alpn", "--no-buffer",
+		"--no-clobber", "--no-keepalive", "--no-npn", "--no-progress-meter",
+		"--no-sessionid", "--ntlm", "--ntlm-wb", "--parallel",
+		"--parallel-immediate", "--path-as-is", "--post301", "--post302",
+		"--post303", "--progress-bar", "--proxy-anyauth", "--proxy-basic",
+		"--proxy-ca-native", "--proxy-digest", "--proxy-insecure",
+		"--proxy-negotiate", "--proxy-ntlm", "--proxy-ssl-allow-beast",
+		"--proxy-tlsv1",
+		"--raw", "--remote-time", "--retry-all-errors", "--retry-connrefused",
+		"--sasl-ir", "--show-error", "--silent", "--socks5-basic",
+		"--socks5-gssapi", "--ssl", "--ssl-allow-beast", "--ssl-reqd",
+		"--ssl-revoke-best-effort",
+		"--styled-output", "--suppress-connect-headers", "--tcp-fastopen",
+		"--tcp-nodelay", "--tls-earlydata", "--tlsv1", "--tlsv1.0",
+		"--tlsv1.1", "--tlsv1.2", "--tlsv1.3", "--trace-ids",
+		"--trace-time", "--tr-encoding", "--use-ascii", "--verbose",
+		"--version", "--xattr",
+	) {
+		if hasInlineValue {
+			return safety.R3, index
+		}
+		return safety.R2, index
+	}
+
+	if hasExactWord(
+		name,
+		"--abstract-unix-socket", "--aws-sigv4", "--connect-timeout",
+		"--connect-to", "--continue-at", "--curves",
+		"--dns-interface", "--dns-ipv4-addr", "--dns-ipv6-addr",
+		"--dns-servers", "--doh-url", "--expect100-timeout", "--ftp-account",
+		"--ftp-method", "--happy-eyeballs-timeout-ms",
+		"--haproxy-clientip", "--hostpubmd5",
+		"--hostpubsha256", "--interface", "--ip-tos", "--keepalive-cnt",
+		"--keepalive-time", "--limit-rate", "--local-port", "--login-options",
+		"--max-filesize", "--max-redirs", "--max-time", "--noproxy",
+		"--oauth2-bearer", "--parallel-max", "--pinnedpubkey", "--preproxy",
+		"--proxy", "--proxy-cacert", "--proxy-capath", "--proxy-ciphers",
+		"--proxy-crlfile", "--proxy-service-name",
+		"--proxy-tls13-ciphers", "--proxy-tlsauthtype", "--proxy-tlspassword",
+		"--proxy-tlsuser", "--proxy-user", "--proxy1.0", "--rate", "--range",
+		"--referer", "--request-target", "--resolve", "--retry",
+		"--retry-delay", "--retry-max-time", "--sasl-authzid", "--service-name",
+		"--socks4", "--socks4a", "--socks5", "--socks5-hostname",
+		"--speed-limit", "--speed-time", "--tls-max", "--tls13-ciphers",
+		"--tlsauthtype", "--tlspassword", "--tlsuser", "--tftp-blksize",
+		"--time-cond", "--unix-socket", "--user", "--user-agent",
+	) {
+		_, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok {
+			return safety.R3, index
+		}
+		return safety.R2, next
+	}
+	return safety.R3, index
+}
+
+//nolint:gocyclo // Short-option value consumption must remain explicit and fail closed.
+func classifyCurlShortOption(args []string, index int) (safety.Risk, int) {
+	option := strings.TrimPrefix(args[index], "-")
+	if option == "" {
+		return safety.R3, index
+	}
+	for pos := 0; pos < len(option); pos++ {
+		switch option[pos] {
+		case 'd', 'E', 'F', 'J', 'K', 'n', 'O', 'P', 'Q', 't', 'T':
+			return safety.R3, index
+		case 'X':
+			method, next, ok := joinedOrNextOptionValue(option[pos+1:], args, index)
+			if !ok || !isReadOnlyHTTPMethod(method) {
+				return safety.R3, index
 			}
-			return args[i+1], true
-		case strings.HasPrefix(arg, "--output-document="):
-			return strings.TrimPrefix(arg, "--output-document="), true
-		case strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--"):
-			optionPos := strings.IndexRune(strings.TrimPrefix(arg, "-"), 'O')
-			if optionPos < 0 {
-				continue
+			return safety.R2, next
+		case 'o':
+			target, next, ok := joinedOrNextOptionValue(option[pos+1:], args, index)
+			if !ok || target == "" || isSensitiveWriteTarget(target) {
+				return safety.R3, index
 			}
-			target := strings.TrimPrefix(arg, "-")[optionPos+1:]
-			if target != "" {
-				return target, true
+			return safety.R2, next
+		case 'c', 'D':
+			target, next, ok := joinedOrNextOptionValue(option[pos+1:], args, index)
+			if !ok || isUnsafeOutputTarget(target) {
+				return safety.R3, index
 			}
-			if i+1 >= len(args) {
-				return "", true
+			return safety.R2, next
+		case 'w':
+			value, next, ok := joinedOrNextOptionValue(option[pos+1:], args, index)
+			if !ok || classifyCurlWriteOut(value) == safety.R3 {
+				return safety.R3, index
 			}
-			return args[i+1], true
+			return safety.R2, next
+		case 'H':
+			value, next, ok := joinedOrNextOptionValue(option[pos+1:], args, index)
+			if !ok || classifyHTTPHeader(value) == safety.R3 {
+				return safety.R3, index
+			}
+			return safety.R2, next
+		case 'b':
+			value, next, ok := joinedOrNextOptionValue(option[pos+1:], args, index)
+			if !ok || curlCookieReadsFile(value) {
+				return safety.R3, index
+			}
+			return safety.R2, next
+		case 'A', 'C', 'e', 'm', 'r', 'u', 'U', 'x', 'y', 'Y', 'z':
+			_, next, ok := joinedOrNextOptionValue(option[pos+1:], args, index)
+			if !ok {
+				return safety.R3, index
+			}
+			return safety.R2, next
+		default:
+			if !strings.ContainsRune("012346aBfgGhIijkLlMNRpqRsSvVZ#", rune(option[pos])) {
+				return safety.R3, index
+			}
 		}
 	}
-	return "", false
+	return safety.R2, index
+}
+
+//nolint:gocyclo // Structured fail-closed option parsing is intentionally explicit.
+func classifyWget(args []string) safety.Risk {
+	configDisabled := wgetConfigDisabled(args)
+	parseOptions := true
+	explicitOutput := false
+	noOutput := false
+	urls := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !parseOptions {
+			if !isSafeTransferURL(arg, "http", "https", "ftp") {
+				return safety.R3
+			}
+			urls = append(urls, arg)
+			continue
+		}
+		if arg == "--" {
+			parseOptions = false
+			continue
+		}
+		if strings.HasPrefix(arg, "--") {
+			risk, next, output, spider := classifyWgetLongOption(args, i)
+			if risk == safety.R3 {
+				return safety.R3
+			}
+			explicitOutput = explicitOutput || output
+			noOutput = noOutput || spider
+			i = next
+			continue
+		}
+		if strings.HasPrefix(arg, "-") && arg != "-" {
+			risk, next, output := classifyWgetShortOption(args, i)
+			if risk == safety.R3 {
+				return safety.R3
+			}
+			explicitOutput = explicitOutput || output
+			i = next
+			continue
+		}
+		if !isSafeTransferURL(arg, "http", "https", "ftp") {
+			return safety.R3
+		}
+		urls = append(urls, arg)
+	}
+	if !explicitOutput && !noOutput {
+		for _, rawURL := range urls {
+			if hasSensitiveDownloadName(rawURL) {
+				return safety.R3
+			}
+		}
+	}
+	if !configDisabled {
+		return safety.R3
+	}
+	return safety.R2
+}
+
+//nolint:gocyclo // Every accepted wget long option is intentionally visible in this fail-closed inventory.
+func classifyWgetLongOption(args []string, index int) (safety.Risk, int, bool, bool) {
+	name, inlineValue, hasInlineValue := splitLongOption(args[index])
+	if hasExactWord(
+		name,
+		"--config", "--execute", "--use-askpass", "--delete-after", "--unlink",
+		"--post-data", "--post-file", "--body-data", "--body-file",
+		"--input-file", "--mirror", "--recursive", "--page-requisites",
+		"--content-disposition", "--trust-server-names", "--default-page",
+		"--certificate", "--private-key", "--load-cookies", "--netrc-file",
+		"--backup-converted", "--follow-ftp", "--preserve-permissions",
+		"--retr-symlinks", "--span-hosts",
+	) || strings.HasPrefix(name, "--warc-") &&
+		name != "--warc-file" && name != "--warc-tempdir" {
+		return safety.R3, index, false, false
+	}
+
+	switch name {
+	case "--method":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || !isReadOnlyHTTPMethod(value) {
+			return safety.R3, index, false, false
+		}
+		return safety.R2, next, false, false
+	case "--header":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || classifyHTTPHeader(value) == safety.R3 {
+			return safety.R3, index, false, false
+		}
+		return safety.R2, next, false, false
+	case "--output-document":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || isUnsafeOutputTarget(value) {
+			return safety.R3, index, false, false
+		}
+		return safety.R2, next, true, false
+	case "--directory-prefix", "--output-file", "--append-output",
+		"--save-cookies", "--hsts-file", "--warc-file", "--warc-tempdir":
+		value, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok || isUnsafeOutputTarget(value) {
+			return safety.R3, index, false, false
+		}
+		return safety.R2, next, false, false
+	case "--spider":
+		if hasInlineValue {
+			return safety.R3, index, false, false
+		}
+		return safety.R2, index, false, true
+	}
+
+	if hasExactWord(
+		name,
+		"--adjust-extension", "--auth-no-challenge", "--background", "--cache",
+		"--content-on-error",
+		"--continue", "--convert-file-only", "--convert-links", "--debug",
+		"--dns-cache", "--force-directories", "--force-html",
+		"--ftp-stmlf", "--help", "--hsts", "--https-only", "--if-modified-since",
+		"--ignore-case", "--ignore-length", "--iri", "--keep-badhash",
+		"--keep-session-cookies", "--no-cache", "--no-check-certificate",
+		"--no-clobber", "--no-config", "--no-cookies", "--no-directories",
+		"--no-glob",
+		"--no-dns-cache", "--no-host-directories", "--no-http-keep-alive",
+		"--no-hsts",
+		"--no-if-modified-since", "--no-iri", "--no-passive-ftp",
+		"--no-parent", "--no-proxy", "--no-remove-listing",
+		"--no-use-server-timestamps", "--no-verbose", "--no-xattr",
+		"--passive-ftp", "--protocol-directories", "--quiet", "--random-wait",
+		"--relative",
+		"--retry-connrefused", "--save-headers", "--server-response",
+		"--show-progress", "--timestamping",
+		"--use-server-timestamps", "--verbose", "--version", "--xattr",
+	) {
+		if hasInlineValue {
+			return safety.R3, index, false, false
+		}
+		return safety.R2, index, false, false
+	}
+
+	if hasExactWord(
+		name,
+		"--accept", "--accept-regex", "--base", "--bind-address",
+		"--bind-dns-address", "--ca-directory", "--ciphers",
+		"--compression", "--connect-timeout", "--cut-dirs",
+		"--dns-timeout", "--domains", "--exclude-directories",
+		"--exclude-domains", "--ftp-password", "--ftp-user", "--http-password",
+		"--http-user", "--https-proxy", "--include-directories",
+		"--level", "--limit-rate", "--local-encoding", "--max-redirect",
+		"--password", "--prefer-family", "--progress", "--proxy-password",
+		"--proxy-user", "--quota", "--read-timeout", "--referer", "--reject",
+		"--reject-regex", "--remote-encoding", "--report-speed",
+		"--restrict-file-names", "--retry-on-http-error", "--secure-protocol",
+		"--start-pos", "--timeout", "--tries", "--user", "--user-agent", "--wait",
+		"--waitretry",
+	) {
+		_, next, ok := longOptionValue(args, index, inlineValue, hasInlineValue)
+		if !ok {
+			return safety.R3, index, false, false
+		}
+		return safety.R2, next, false, false
+	}
+	return safety.R3, index, false, false
+}
+
+//nolint:gocyclo // Short-option value consumption must remain explicit and fail closed.
+func classifyWgetShortOption(args []string, index int) (safety.Risk, int, bool) {
+	option := strings.TrimPrefix(args[index], "-")
+	if option == "" {
+		return safety.R3, index, false
+	}
+	if hasExactWord(option, "nc", "nd", "nH", "np", "nv") {
+		return safety.R2, index, false
+	}
+	for pos := 0; pos < len(option); pos++ {
+		switch option[pos] {
+		case 'e', 'H', 'i', 'K', 'm', 'p', 'r':
+			return safety.R3, index, false
+		case 'O', 'P', 'o', 'a':
+			target, next, ok := joinedOrNextOptionValue(option[pos+1:], args, index)
+			if !ok || isUnsafeOutputTarget(target) {
+				return safety.R3, index, false
+			}
+			return safety.R2, next, option[pos] == 'O'
+		case 'A', 'B', 'D', 'I', 'l', 'Q', 'R', 't', 'T', 'U', 'w', 'X':
+			_, next, ok := joinedOrNextOptionValue(option[pos+1:], args, index)
+			if !ok {
+				return safety.R3, index, false
+			}
+			return safety.R2, next, false
+		default:
+			if !strings.ContainsRune("46bcdEFhLNSqvVxk", rune(option[pos])) {
+				return safety.R3, index, false
+			}
+		}
+	}
+	return safety.R2, index, false
+}
+
+func splitLongOption(arg string) (string, string, bool) {
+	if equals := strings.IndexByte(arg, '='); equals >= 0 {
+		return arg[:equals], arg[equals+1:], true
+	}
+	return arg, "", false
+}
+
+func longOptionValue(
+	args []string,
+	index int,
+	inlineValue string,
+	hasInlineValue bool,
+) (string, int, bool) {
+	if hasInlineValue {
+		return inlineValue, index, inlineValue != ""
+	}
+	if index+1 >= len(args) || args[index+1] == "" {
+		return "", index, false
+	}
+	return args[index+1], index + 1, true
+}
+
+func joinedOrNextOptionValue(joined string, args []string, index int) (string, int, bool) {
+	if joined != "" {
+		return joined, index, true
+	}
+	if index+1 >= len(args) {
+		return "", index, false
+	}
+	return args[index+1], index + 1, args[index+1] != ""
+}
+
+func curlConfigDisabled(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	first := args[0]
+	if first == "--disable" {
+		return true
+	}
+	return len(first) > 1 && first[0] == '-' && first[1] == 'q'
+}
+
+func wgetConfigDisabled(args []string) bool {
+	return len(args) > 0 && args[0] == "--no-config"
+}
+
+func isUnsafeOutputTarget(value string) bool {
+	return value == "" || isSensitiveWriteTarget(value)
+}
+
+func classifyCurlWriteOut(value string) safety.Risk {
+	if value == "" || strings.HasPrefix(value, "@") {
+		return safety.R3
+	}
+	const outputDirective = "%output{"
+	for remaining := value; ; {
+		start := strings.Index(remaining, outputDirective)
+		if start < 0 {
+			return safety.R2
+		}
+		remaining = remaining[start+len(outputDirective):]
+		end := strings.IndexByte(remaining, '}')
+		if end < 0 {
+			return safety.R3
+		}
+		target := strings.TrimPrefix(remaining[:end], ">>")
+		if isUnsafeOutputTarget(target) {
+			return safety.R3
+		}
+		remaining = remaining[end+1:]
+	}
+}
+
+func classifyHTTPHeader(value string) safety.Risk {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.HasPrefix(trimmed, "@") ||
+		strings.ContainsAny(trimmed, "\r\n") {
+		return safety.R3
+	}
+	name, method, found := strings.Cut(trimmed, ":")
+	if !isHTTPMethodOverrideHeader(strings.TrimSpace(name)) {
+		return safety.R2
+	}
+	if !found || !isReadOnlyHTTPMethod(strings.TrimSpace(method)) {
+		return safety.R3
+	}
+	return safety.R2
+}
+
+func isHTTPMethodOverrideHeader(name string) bool {
+	return strings.EqualFold(name, "X-HTTP-Method-Override") ||
+		strings.EqualFold(name, "X-HTTP-Method") ||
+		strings.EqualFold(name, "X-Method-Override")
+}
+
+func curlCookieReadsFile(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	return trimmed == "" || strings.HasPrefix(trimmed, "@") || !strings.Contains(trimmed, "=")
+}
+
+func curlQueryReadsFile(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || strings.HasPrefix(trimmed, "@") {
+		return true
+	}
+	at := strings.IndexByte(trimmed, '@')
+	equals := strings.IndexByte(trimmed, '=')
+	return at >= 0 && (equals < 0 || at < equals)
+}
+
+func isSafeTransferURL(value string, allowedSchemes ...string) bool {
+	if value == "" {
+		return false
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return isHostPortShorthand(value)
+	}
+	if strings.ContainsAny(value, "{}[]") || strings.ContainsAny(parsed.Path, "*?") {
+		return false
+	}
+	if parsed.Scheme == "" {
+		return true
+	}
+	for _, allowed := range allowedSchemes {
+		if strings.EqualFold(parsed.Scheme, allowed) {
+			return true
+		}
+	}
+	return isHostPortShorthand(value)
+}
+
+func isHostPortShorthand(value string) bool {
+	colon := strings.IndexByte(value, ':')
+	if colon <= 0 || strings.Contains(value[:colon], "/") {
+		return false
+	}
+	host := value[:colon]
+	if !strings.EqualFold(host, "localhost") && !strings.Contains(host, ".") {
+		return false
+	}
+	remainder := value[colon+1:]
+	if slash := strings.IndexByte(remainder, '/'); slash >= 0 {
+		remainder = remainder[:slash]
+	}
+	if remainder == "" {
+		return false
+	}
+	for _, char := range remainder {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	parsed, err := url.Parse("http://" + value)
+	return err == nil && parsed.Host != ""
+}
+
+func hasSensitiveDownloadName(rawURL string) bool {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return true
+	}
+	name := path.Base(strings.ReplaceAll(parsed.Path, "\\", "/"))
+	if name == "." || name == "/" || name == "" {
+		return false
+	}
+	return isSensitiveWriteTarget(name)
+}
+
+func isReadOnlyHTTPMethod(value string) bool {
+	switch strings.ToUpper(value) {
+	case "GET", "HEAD", "OPTIONS", "TRACE":
+		return true
+	default:
+		return false
+	}
 }
 
 func findWriteTarget(args []string) (string, bool) {

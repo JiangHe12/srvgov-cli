@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/JiangHe12/opskit-core/v2/apperrors"
 )
 
 func TestGlobalFlagsHelp(t *testing.T) {
@@ -35,11 +37,53 @@ func TestGlobalFlagsWithVersion(t *testing.T) {
 	SetVersionInfo("v0.0.0-test", "deadbeef", "2026-06-29")
 	t.Cleanup(func() { SetVersionInfo("dev", "", "") })
 
-	out, err := executeRoot(t, filepath.Join(t.TempDir(), "config.yaml"), "--debug", "--trace", "--no-color", "-o", "plain", "version")
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
+	for _, args := range [][]string{
+		{"--debug", "--trace", "--no-color", "-o", "plain", "version"},
+		{"--debug", "--trace", "--no-color", "-o", "plain", "--version"},
+	} {
+		out, err := executeRoot(t, filepath.Join(t.TempDir(), "config.yaml"), args...)
+		if err != nil {
+			t.Fatalf("Execute(%v) error = %v", args, err)
+		}
+		if want := "v0.0.0-test\n"; out != want {
+			t.Fatalf("version plain = %q, want %q", out, want)
+		}
 	}
-	if want := "v0.0.0-test\n"; out != want {
-		t.Fatalf("version plain = %q, want %q", out, want)
+}
+
+func TestInvalidOutputFormatFailsBeforeCommandOutput(t *testing.T) {
+	t.Parallel()
+
+	for _, command := range []string{"capabilities", "version"} {
+		t.Run(command, func(t *testing.T) {
+			t.Parallel()
+			output, err := executeRoot(
+				t,
+				filepath.Join(t.TempDir(), "config.yaml"),
+				"-o",
+				"definitely-invalid",
+				command,
+			)
+			assertAppError(t, err, apperrors.CodeUsageError, 1)
+			if output != "" {
+				t.Fatalf("output = %q, want empty", output)
+			}
+		})
+	}
+}
+
+func TestInvalidOutputFormatFailsBeforeRootVersionOutput(t *testing.T) {
+	t.Parallel()
+
+	output, err := executeRoot(
+		t,
+		filepath.Join(t.TempDir(), "config.yaml"),
+		"-o",
+		"definitely-invalid",
+		"--version",
+	)
+	assertAppError(t, err, apperrors.CodeUsageError, 1)
+	if output != "" {
+		t.Fatalf("output = %q, want empty", output)
 	}
 }

@@ -151,10 +151,8 @@ func TestGovernedReadFanoutAuditsEachTargetWithOwnEventType(t *testing.T) {
 				t.Fatalf("view = %#v", view)
 			}
 			events := readAuditEvents(t)
-			if len(events) != 2 {
-				t.Fatalf("events = %#v", events)
-			}
-			for _, event := range events {
+			outcomes := requireReadAuditPairs(t, events, string(tt.eventType), "R0", 2)
+			for _, event := range outcomes {
 				if event.EventType != tt.eventType || event.RiskTier != "R0" {
 					t.Fatalf("event = %#v", event)
 				}

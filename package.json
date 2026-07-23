@@ -1,6 +1,6 @@
 {
   "name": "srvgov-cli",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "Governed remote server command execution CLI for AI agents",
   "bin": {
     "srvgov": "bin/srvgov-cli.js",
@@ -13,7 +13,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "postinstall": "node scripts/install.js"
+    "postinstall": "node scripts/install.js",
+    "test": "node --test test/install.test.js"
   },
   "keywords": [
     "ssh",
@@ -27,6 +28,12 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/JiangHe12/srvgov-cli.git"
+  },
+  "binaryManifest": {
+    "schema": 1,
+    "repository": "JiangHe12/srvgov-cli",
+    "version": "0.10.3",
+    "binaries": {}
   },
   "homepage": "https://github.com/JiangHe12/srvgov-cli",
   "engines": {

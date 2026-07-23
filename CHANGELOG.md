@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.10.3
+
+### Security
+
+- Hardened `curl` and `wget` command classification around request methods,
+  output targets, protocol selection, and explicit or implicit configuration.
+  `curl` must begin with `-q` or `--disable` to prove that startup config is
+  disabled; unknown or ambiguous forms fail closed at the highest applicable
+  risk tier.
+- Made governed R0 reads audit fail-closed: intent is durable before backend
+  access and the correlated outcome is durable before output is released.
+  Context export now enforces target RBAC and protected-context policy, and
+  denied or incomplete reads release no result.
+- Updated `opskit-core/v2` to v2.0.2, inheriting owner-only, no-follow atomic
+  handling for context, credential, and TOFU trust stores plus fail-closed
+  multi-document and conflicting trust-record validation.
+- Deferred bounded, redacted TOFU notifications until the required read-audit
+  outcome is durable. Log parsing now uses an explicit 16 MiB line bound,
+  propagates scanner failures, and rejects unsupported output formats before
+  command execution or output.
+- Bound npm installs to the six platform digests embedded in the
+  provenance-covered package manifest. Release and npm publication now verify
+  the exact signed bundle against the GitHub Actions OIDC identity, with Cosign
+  upgraded to v2.6.4.
+
 ## v0.10.2
 
 ### Security

@@ -57,11 +57,9 @@ func TestDockerListParsesStructuredRedactedRows(t *testing.T) {
 		t.Fatalf("list = %#v; output = %s", got, output)
 	}
 	events := readAuditEvents(t)
-	if len(events) != 1 || events[0].EventType != srvgovaudit.EventTypeDockerList || events[0].RiskTier != "R0" {
-		t.Fatalf("audit events = %#v", events)
-	}
+	outcomes := requireReadAuditPairs(t, events, string(srvgovaudit.EventTypeDockerList), "R0", 1)
 	if strings.Contains(string(readAuditData(t)), "list-secret") {
-		t.Fatalf("audit leaked docker list secret: %#v", events[0])
+		t.Fatalf("audit leaked docker list secret: %#v", outcomes[0])
 	}
 }
 

@@ -43,22 +43,26 @@ func newVersionCmd(f *cliFlags) *cobra.Command {
 		Short: "Show version information",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			info := versionInfo{Built: built, Commit: commit, Version: version}
-			p := newPrinter(f)
-			if f.Output == "json" {
-				return p.JSONData("VersionInfo", info)
-			}
-			if f.Output == "plain" {
-				return p.Info(info.Version)
-			}
-			return p.Info(fmt.Sprintf(
-				"srvgov-cli %s (commit: %s, built: %s)",
-				info.Version,
-				info.Commit,
-				info.Built,
-			))
+			return printVersionInfo(f)
 		},
 	}
+}
+
+func printVersionInfo(f *cliFlags) error {
+	info := versionInfo{Built: built, Commit: commit, Version: version}
+	p := newPrinter(f)
+	if f.Output == "json" {
+		return p.JSONData("VersionInfo", info)
+	}
+	if f.Output == "plain" {
+		return p.Info(info.Version)
+	}
+	return p.Info(fmt.Sprintf(
+		"srvgov-cli %s (commit: %s, built: %s)",
+		info.Version,
+		info.Commit,
+		info.Built,
+	))
 }
 
 type CapabilitiesData struct {
@@ -118,7 +122,7 @@ func capabilitiesData() CapabilitiesData {
 				"--allow-audit-prune",
 			},
 			Governance: CapGovernance{
-				Audit:     "authenticated v2 envelopes use commit-aware mutation audit; not-committed outcomes enter a private replay spool, indeterminate appends are quarantined while already-started outcomes queue behind the marker, and confirmed checkpoint-aware prune is R3 with sibling control evidence, --confirm, --yes, a ticket, and --allow-audit-prune",
+				Audit:     "authenticated v2 envelopes require a durable read intent before backend access and a durable read outcome before result release; mutations use commit-aware audit, not-committed outcomes enter a private replay spool, indeterminate appends are quarantined while already-started outcomes queue behind the marker, and confirmed checkpoint-aware prune is R3 with sibling control evidence, --confirm, --yes, a ticket, and --allow-audit-prune",
 				RBAC:      "opt-in roles reader/writer/admin",
 				DryRun:    true,
 				TOFU:      "strict SSH host-key fingerprint pinning",

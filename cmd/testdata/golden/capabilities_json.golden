@@ -47,7 +47,7 @@
         "--allow-audit-prune"
       ],
       "governance": {
-        "audit": "authenticated v2 envelopes use commit-aware mutation audit; not-committed outcomes enter a private replay spool, indeterminate appends are quarantined while already-started outcomes queue behind the marker, and confirmed checkpoint-aware prune is R3 with sibling control evidence, --confirm, --yes, a ticket, and --allow-audit-prune",
+        "audit": "authenticated v2 envelopes require a durable read intent before backend access and a durable read outcome before result release; mutations use commit-aware audit, not-committed outcomes enter a private replay spool, indeterminate appends are quarantined while already-started outcomes queue behind the marker, and confirmed checkpoint-aware prune is R3 with sibling control evidence, --confirm, --yes, a ticket, and --allow-audit-prune",
         "rbac": "opt-in roles reader/writer/admin",
         "dryRun": true,
         "tofu": "strict SSH host-key fingerprint pinning",

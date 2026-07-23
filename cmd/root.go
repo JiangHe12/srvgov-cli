@@ -48,13 +48,23 @@ func NewRootCmd() *cobra.Command {
 }
 
 func newRootCmdWith(f *cliFlags) *cobra.Command {
+	var showVersion bool
 	root := &cobra.Command{
 		Use:           "srvgov-cli",
 		Short:         "Governed remote server operations for AI agents",
-		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if showVersion {
+				return printVersionInfo(f)
+			}
+			return cmd.Help()
+		},
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateOutputFormat(f.Output); err != nil {
+				return err
+			}
 			applyGlobalFlags(f)
 			f.Out = cmd.OutOrStdout()
 			f.Err = cmd.ErrOrStderr()
@@ -65,6 +75,7 @@ func newRootCmdWith(f *cliFlags) *cobra.Command {
 			return err
 		},
 	}
+	root.Flags().BoolVar(&showVersion, "version", false, "Show version information")
 	root.PersistentFlags().StringVarP(&f.Output, "output", "o", "table", "Output format: table | json | plain")
 	root.PersistentFlags().BoolVar(&f.Debug, "debug", false, "Enable debug logging")
 	root.PersistentFlags().BoolVar(&f.Trace, "trace", false, "Enable trace logging (implies --debug)")
@@ -95,6 +106,19 @@ func newRootCmdWith(f *cliFlags) *cobra.Command {
 		newInstallCmd(f),
 	)
 	return root
+}
+
+func validateOutputFormat(value string) error {
+	switch value {
+	case "table", "json", "plain":
+		return nil
+	default:
+		return apperrors.New(
+			apperrors.CodeUsageError,
+			fmt.Sprintf("unsupported output format %q; expected table, json, or plain", value),
+			nil,
+		)
+	}
 }
 
 func applyGlobalFlags(f *cliFlags) {

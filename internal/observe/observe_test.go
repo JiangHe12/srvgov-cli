@@ -171,7 +171,10 @@ func TestParseLogsRedactsStructuredFields(t *testing.T) {
 	t.Parallel()
 
 	journal := `{"__REALTIME_TIMESTAMP":"1710000000000000","_HOSTNAME":"web-01","SYSLOG_IDENTIFIER":"api token=unit-secret","PRIORITY":"3","MESSAGE":"password=journal-secret"}` + "\n"
-	lines := ParseJournal(journal)
+	lines, err := ParseJournal(journal)
+	if err != nil {
+		t.Fatalf("ParseJournal() error = %v", err)
+	}
 	if len(lines) != 1 {
 		t.Fatalf("ParseJournal() = %#v", lines)
 	}
@@ -179,7 +182,10 @@ func TestParseLogsRedactsStructuredFields(t *testing.T) {
 		t.Fatalf("journal line leaked secret: %#v", lines[0])
 	}
 
-	fileLines := ParseFileLines("user=bob password=file-secret\nnormal line\n", "password")
+	fileLines, err := ParseFileLines("user=bob password=file-secret\nnormal line\n", "password")
+	if err != nil {
+		t.Fatalf("ParseFileLines() error = %v", err)
+	}
 	if len(fileLines) != 1 || strings.Contains(fileLines[0].Message, "file-secret") {
 		t.Fatalf("ParseFileLines() = %#v", fileLines)
 	}
@@ -188,10 +194,13 @@ func TestParseLogsRedactsStructuredFields(t *testing.T) {
 func TestParseDockerLogsUsesTimestampAndFallsBackForMalformedLines(t *testing.T) {
 	t.Parallel()
 
-	lines := ParseDockerLines(
+	lines, err := ParseDockerLines(
 		"2026-06-12T08:15:30.123456789Z ready password=docker-secret\n" +
 			"not-a-timestamp whole line\n",
 	)
+	if err != nil {
+		t.Fatalf("ParseDockerLines() error = %v", err)
+	}
 	if len(lines) != 2 {
 		t.Fatalf("ParseDockerLines() = %#v", lines)
 	}
@@ -201,5 +210,61 @@ func TestParseDockerLogsUsesTimestampAndFallsBackForMalformedLines(t *testing.T)
 	}
 	if lines[1].Timestamp != "" || lines[1].Message != "not-a-timestamp whole line" {
 		t.Fatalf("fallback line = %#v", lines[1])
+	}
+}
+
+func TestParseLogLinesAcceptsMoreThanScannerDefault(t *testing.T) {
+	t.Parallel()
+
+	line := strings.Repeat("x", 70<<10)
+	lines, err := ParseFileLines(line+"\n", "")
+	if err != nil {
+		t.Fatalf("ParseFileLines() error = %v", err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("ParseFileLines() returned %d lines, want 1", len(lines))
+	}
+	if lines[0].Message != line {
+		t.Fatalf("ParseFileLines() message length = %d, want %d", len(lines[0].Message), len(line))
+	}
+}
+
+func TestParseLogLinesFailClosedAboveCaptureLimit(t *testing.T) {
+	t.Parallel()
+
+	tooLong := strings.Repeat("x", maxLogLineBytes+1)
+	tests := []struct {
+		name  string
+		parse func() error
+	}{
+		{
+			name: "journal",
+			parse: func() error {
+				_, err := ParseJournal(tooLong)
+				return err
+			},
+		},
+		{
+			name: "file",
+			parse: func() error {
+				_, err := ParseFileLines(tooLong, "")
+				return err
+			},
+		},
+		{
+			name: "docker",
+			parse: func() error {
+				_, err := ParseDockerLines(tooLong)
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if err := tt.parse(); err == nil {
+				t.Fatal("parse error = nil, want oversized-line failure")
+			}
+		})
 	}
 }

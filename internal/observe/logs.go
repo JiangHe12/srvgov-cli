@@ -11,6 +11,8 @@ import (
 	"github.com/JiangHe12/opskit-core/v2/redact"
 )
 
+const maxLogLineBytes = (16 << 20) + 1
+
 // LogOptions controls journal or file observation.
 type LogOptions struct {
 	Unit     string
@@ -61,9 +63,9 @@ func ShellQuote(value string) string {
 }
 
 // ParseJournal parses journalctl JSON lines and skips malformed records.
-func ParseJournal(value string) []LogLine {
+func ParseJournal(value string) ([]LogLine, error) {
 	result := make([]LogLine, 0)
-	scanner := bufio.NewScanner(strings.NewReader(value))
+	scanner := newLogScanner(value)
 	for scanner.Scan() {
 		var record map[string]any
 		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
@@ -77,13 +79,16 @@ func ParseJournal(value string) []LogLine {
 			Message:   redact.String(stringValue(record["MESSAGE"])),
 		})
 	}
-	return result
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan journal log lines: %w", err)
+	}
+	return result, nil
 }
 
 // ParseFileLines normalizes file lines, optionally filtering by literal text.
-func ParseFileLines(value, grep string) []LogLine {
+func ParseFileLines(value, grep string) ([]LogLine, error) {
 	result := make([]LogLine, 0)
-	scanner := bufio.NewScanner(strings.NewReader(value))
+	scanner := newLogScanner(value)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if grep != "" && !strings.Contains(line, grep) {
@@ -91,14 +96,17 @@ func ParseFileLines(value, grep string) []LogLine {
 		}
 		result = append(result, LogLine{Message: redact.String(line)})
 	}
-	return result
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan file log lines: %w", err)
+	}
+	return result, nil
 }
 
 // ParseDockerLines normalizes --timestamps output and preserves malformed lines.
-func ParseDockerLines(values ...string) []LogLine {
+func ParseDockerLines(values ...string) ([]LogLine, error) {
 	result := make([]LogLine, 0)
 	for _, value := range values {
-		scanner := bufio.NewScanner(strings.NewReader(value))
+		scanner := newLogScanner(value)
 		for scanner.Scan() {
 			line := scanner.Text()
 			timestamp, message, ok := strings.Cut(line, " ")
@@ -112,8 +120,17 @@ func ParseDockerLines(values ...string) []LogLine {
 				Message:   redact.String(message),
 			})
 		}
+		if err := scanner.Err(); err != nil {
+			return nil, fmt.Errorf("scan docker log lines: %w", err)
+		}
 	}
-	return result
+	return result, nil
+}
+
+func newLogScanner(value string) *bufio.Scanner {
+	scanner := bufio.NewScanner(strings.NewReader(value))
+	scanner.Buffer(make([]byte, 64*1024), maxLogLineBytes+1)
+	return scanner
 }
 
 func firstValue(record map[string]any, names ...string) string {

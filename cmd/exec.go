@@ -42,6 +42,57 @@ var (
 	}
 )
 
+const maxDeferredTOFUNotices = 32
+
+type deferredTOFUNotices struct {
+	f    *cliFlags
+	mu   sync.Mutex
+	pins []sshexec.Pin
+}
+
+func newDeferredTOFUNotices(f *cliFlags) *deferredTOFUNotices {
+	return &deferredTOFUNotices{
+		f:    f,
+		pins: make([]sshexec.Pin, 0, 1),
+	}
+}
+
+func governedTOFUNotifier(
+	f *cliFlags,
+	mutation bool,
+) (func(sshexec.Pin), *deferredTOFUNotices) {
+	if mutation {
+		return tofuNotice(f), nil
+	}
+	notices := newDeferredTOFUNotices(f)
+	return notices.notify, notices
+}
+
+func (notices *deferredTOFUNotices) notify(pin sshexec.Pin) {
+	if notices == nil {
+		return
+	}
+	notices.mu.Lock()
+	defer notices.mu.Unlock()
+	if len(notices.pins) < maxDeferredTOFUNotices {
+		notices.pins = append(notices.pins, pin)
+	}
+}
+
+func (notices *deferredTOFUNotices) flush() {
+	if notices == nil {
+		return
+	}
+	notices.mu.Lock()
+	pins := append([]sshexec.Pin(nil), notices.pins...)
+	notices.pins = nil
+	notices.mu.Unlock()
+	notify := tofuNotice(notices.f)
+	for _, pin := range pins {
+		notify(pin)
+	}
+}
+
 func tofuNotice(f *cliFlags) func(sshexec.Pin) {
 	return func(pin sshexec.Pin) {
 		writer := io.Writer(os.Stderr)
@@ -278,7 +329,7 @@ func authorizeGovernedFanout(
 			if plan.Risk.Effective != maxEffective {
 				continue
 			}
-			appendExecAudit(
+			appendExecDeniedAudit(
 				f,
 				plan.Target.Value,
 				plan.Target.Name,
@@ -287,13 +338,7 @@ func authorizeGovernedFanout(
 				reason,
 				planPolicyCommand(plan, command),
 				plan.Risk.Effective,
-				srvgovaudit.StatusDenied,
-				0,
-				"",
-				"",
 				reasonErr,
-				false,
-				srvgovaudit.EventTypeAuthorizationDenied,
 			)
 			break
 		}
@@ -316,7 +361,7 @@ func authorizeGovernedFanout(
 		if authErr == nil {
 			continue
 		}
-		appendExecAudit(
+		appendExecDeniedAudit(
 			f,
 			plan.Target.Value,
 			plan.Target.Name,
@@ -325,13 +370,7 @@ func authorizeGovernedFanout(
 			reason,
 			planPolicyCommand(plan, command),
 			plan.Risk.Effective,
-			srvgovaudit.StatusDenied,
-			0,
-			"",
-			"",
 			authErr,
-			false,
-			srvgovaudit.EventTypeAuthorizationDenied,
 		)
 		return apperrors.New(
 			apperrors.CodeAuthorizationRequired,
@@ -416,17 +455,12 @@ func printExecResult(f *cliFlags, view execResultView) error {
 	})
 }
 
-func appendExecAudit(
+func appendExecDeniedAudit(
 	f *cliFlags,
 	item srvgovctx.Context,
 	contextName, operator, ticket, reason, command string,
 	risk safety.Risk,
-	status string,
-	exitCode int,
-	stdout, stderr string,
 	eventErr error,
-	outputIncomplete bool,
-	eventType srvgovaudit.EventType,
 ) {
 	path, err := coreaudit.DefaultPath()
 	if err != nil {
@@ -439,24 +473,20 @@ func appendExecAudit(
 		errorInfo = &srvgovaudit.ErrorInfo{Code: string(appErr.Code), Message: appErr.Message}
 	}
 	if err := appendQueuedAuditEvent(f, path, srvgovaudit.Event{
-		EventType: eventType,
+		EventType: srvgovaudit.EventTypeAuthorizationDenied,
 		Operator:  operator,
 		Context: srvgovaudit.Context{
 			Name:      contextName,
 			Env:       item.Env,
 			Protected: item.Protected,
 		},
-		Ticket:           ticket,
-		Reason:           reason,
-		Target:           srvgovaudit.Target{Host: item.Address()},
-		Command:          command,
-		RiskTier:         riskName(risk),
-		Status:           status,
-		Stdout:           stdout,
-		Stderr:           stderr,
-		OutputIncomplete: outputIncomplete,
-		ExitCode:         exitCode,
-		Error:            errorInfo,
+		Ticket:   ticket,
+		Reason:   reason,
+		Target:   srvgovaudit.Target{Host: item.Address()},
+		Command:  command,
+		RiskTier: riskName(risk),
+		Status:   srvgovaudit.StatusDenied,
+		Error:    errorInfo,
 	}, coreaudit.Options{
 		MaxSizeBytes:         item.AuditMaxSize,
 		EncryptPublicKeyPath: item.AuditEncryptKey,

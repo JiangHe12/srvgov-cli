@@ -1,4 +1,4 @@
-package cmd
+package sshexec
 
 import (
 	"fmt"
@@ -12,7 +12,7 @@ func TestMain(m *testing.M) {
 		_, _ = fmt.Fprintf(os.Stderr, "configure test process security: %v\n", err)
 		os.Exit(1)
 	}
-	home, err := os.MkdirTemp("", "srvgov-cli-test-home-")
+	home, err := os.MkdirTemp("", "sshexec-test-home-")
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "create isolated test home: %v\n", err)
 		os.Exit(1)
@@ -39,11 +39,6 @@ func TestMain(m *testing.M) {
 			previousEnv[name] = nil
 		}
 		_ = os.Setenv(name, home)
-	}
-	if err := createPrivateMutationAuditDirectory(filepath.Join(home, ".srvgov")); err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "create isolated audit directory: %v\n", err)
-		_ = os.RemoveAll(home)
-		os.Exit(1)
 	}
 
 	code := m.Run()

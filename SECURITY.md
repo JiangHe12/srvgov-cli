@@ -63,8 +63,11 @@ authorization values.
 
 ## Supply Chain
 
-Release binaries are built by GitHub Actions, signed with cosign, and published
-with SHA-256 checksums. npm installation verifies the canonical checksums unless
-the operator explicitly sets `SRVGOV_SKIP_VERIFY=1`. Deprecated
-`SRVGOV_CLI_SKIP_VERIFY=1` remains accepted. Avoid untrusted mirrors
-and never disable verification in production automation.
+Release binaries are built and signed by GitHub Actions. Before GitHub Release
+and npm publication, the workflow verifies `checksums.txt` and all six binary
+signatures against this repository's exact `release.yml` identity, release ref,
+and GitHub Actions OIDC issuer. The npm package embeds those six verified
+digests in `package.json`, covered by npm provenance. The installer trusts only
+that package-bound manifest; mirrors can supply bytes but cannot replace
+verification data. There is no verification bypass, and a failed install leaves
+the previous binary unchanged.

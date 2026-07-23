@@ -22,6 +22,11 @@ audit event.
 | R2 | unknown or elevated command | `--reason`, non-empty `--ticket`, and `--yes` |
 | R3 | destructive, privileged, dynamic, or parser-uncertain command | `--reason`, `--ticket`, `--allow-destructive`, and `--yes` |
 
+Governed R0 reads are fail-closed around audit persistence: an `intent` must be
+durable before backend access, and an `outcome` must be durable before any
+result is released. If either append fails, return `LOCAL_IO_ERROR` and withhold
+backend output.
+
 Protected contexts raise R1 to R2 and R2 to R3. The command classifier and
 effective risk reported by srvgov are authoritative.
 

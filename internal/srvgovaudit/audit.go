@@ -78,10 +78,12 @@ type Event struct {
 	Error              *ErrorInfo        `json:"error,omitempty"`
 	File               *FileInfo         `json:"file,omitempty"`
 	MutationID         string            `json:"mutationId,omitempty"`
+	OperationID        string            `json:"operationId,omitempty"`
 	Phase              string            `json:"phase,omitempty"`
 	Action             string            `json:"action,omitempty"`
 	Metadata           *MutationMetadata `json:"metadata,omitempty"`
 	Outcome            *MutationOutcome  `json:"outcome,omitempty"`
+	ReadOutcome        *ReadOutcome      `json:"readOutcome,omitempty"`
 }
 
 // Context identifies the governed server context.
@@ -138,6 +140,14 @@ type MutationOutcome struct {
 	Revision           string `json:"revision,omitempty"`
 	PayloadFingerprint string `json:"payloadFingerprint,omitempty"`
 	PayloadBytes       int64  `json:"payloadBytes,omitempty"`
+}
+
+// ReadOutcome records whether a required audited read completed without
+// persisting backend response bodies.
+type ReadOutcome struct {
+	Status           string `json:"status"`
+	ErrorCode        string `json:"errorCode,omitempty"`
+	OutputIncomplete bool   `json:"outputIncomplete,omitempty"`
 }
 
 // Append redacts sensitive fields and writes through the shared audit engine.

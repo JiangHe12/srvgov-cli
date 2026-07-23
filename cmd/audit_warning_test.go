@@ -2,19 +2,23 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/JiangHe12/opskit-core/v2/apperrors"
+	coreaudit "github.com/JiangHe12/opskit-core/v2/audit"
 
+	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/sshexec"
 )
 
 const auditWarningText = "warning: failed to write audit log:"
 
-func TestAuditCommandWriteFailureWarnsWithoutChangingSuccess(t *testing.T) {
+func TestAuditCommandRequiredReadIntentFailureReturnsLocalIO(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -25,15 +29,56 @@ func TestAuditCommandWriteFailureWarnsWithoutChangingSuccess(t *testing.T) {
 		"-o", "json",
 		"audit", "query", "--path", filepath.Join(home, "missing.log"),
 	)
-	if err != nil {
-		t.Fatalf("audit query error = %v", err)
-	}
-	if !strings.Contains(stderr, auditWarningText) {
-		t.Fatalf("stderr = %q, want audit warning", stderr)
+	assertAppError(t, err, apperrors.CodeLocalIOError, 6)
+	if strings.Contains(stderr, auditWarningText) {
+		t.Fatalf("stderr = %q, required audit failure must be returned", stderr)
 	}
 }
 
-func TestExecAuditWriteFailureWarnsWithoutChangingSuccess(t *testing.T) {
+func TestAuditCommandRequiredReadOutcomeFailureWithholdsResult(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if err := createPrivateMutationAuditDirectory(filepath.Join(home, ".srvgov")); err != nil {
+		t.Fatalf("create audit directory: %v", err)
+	}
+
+	appendCalls := 0
+	f := &cliFlags{
+		Output:          "json",
+		trustedOperator: "tester@localhost",
+		mutationAudit: &mutationAuditRuntime{
+			appendEventWithResult: func(string, srvgovaudit.Event, coreaudit.Options) (coreaudit.AppendResult, error) {
+				appendCalls++
+				if appendCalls == 1 {
+					return coreaudit.AppendResult{State: coreaudit.AppendCommitCommitted}, nil
+				}
+				return coreaudit.AppendResult{State: coreaudit.AppendCommitNotCommitted}, errors.New("injected outcome failure")
+			},
+			now:    func() time.Time { return time.Unix(1, 0).UTC() },
+			random: bytes.NewReader(make([]byte, 16)),
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	root := newRootCmdWith(f)
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{
+		"--config", filepath.Join(home, "config.yaml"),
+		"-o", "json",
+		"audit", "query", "--path", filepath.Join(home, "missing.log"),
+	})
+	err := root.Execute()
+	assertAppError(t, err, apperrors.CodeLocalIOError, 6)
+	if appendCalls != 2 {
+		t.Fatalf("audit append calls = %d, want intent and outcome", appendCalls)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("audit query result was released: %q", stdout.String())
+	}
+}
+
+func TestExecRequiredReadAuditIntentFailureBlocksSSH(t *testing.T) {
 	configPath := prepareExecContext(t, false)
 	blockDefaultAuditPath(t, filepath.Dir(configPath))
 	runner := &fakeSSHRunner{result: sshexec.Result{Stdout: "ok\n"}}
@@ -41,25 +86,61 @@ func TestExecAuditWriteFailureWarnsWithoutChangingSuccess(t *testing.T) {
 	t.Cleanup(restore)
 
 	stderr, err := executeSrvgovWithStderr(t, configPath, "-o", "json", "exec", "pwd")
-	if err != nil {
-		t.Fatalf("exec error = %v", err)
+	assertAppError(t, err, apperrors.CodeLocalIOError, 6)
+	if runner.calls != 0 {
+		t.Fatalf("runner calls = %d, want 0", runner.calls)
 	}
-	if !strings.Contains(stderr, auditWarningText) {
-		t.Fatalf("stderr = %q, want audit warning", stderr)
+	if strings.Contains(stderr, auditWarningText) {
+		t.Fatalf("stderr = %q, required audit failure must be returned", stderr)
 	}
 }
 
-func TestExecAuditWriteFailureDoesNotReplaceRemoteExitCode(t *testing.T) {
+func TestExecRequiredReadAuditOutcomeFailureWithholdsResult(t *testing.T) {
 	configPath := prepareExecContext(t, false)
-	blockDefaultAuditPath(t, filepath.Dir(configPath))
-	runner := &fakeSSHRunner{result: sshexec.Result{ExitCode: 23, Stderr: "failed"}}
-	restore := replaceSSHRunner(runner)
-	t.Cleanup(restore)
+	runner := &fakeSSHRunner{result: sshexec.Result{Stdout: "must-not-be-released\n"}}
+	previous := newSSHRunner
+	newSSHRunner = func(notify func(sshexec.Pin)) sshRunner {
+		notify(sshexec.Pin{
+			Address:     "must-not-be-released.example:22",
+			KeyType:     "ssh-ed25519",
+			Fingerprint: "SHA256:must-not-be-released",
+		})
+		return runner
+	}
+	t.Cleanup(func() { newSSHRunner = previous })
 
-	stderr, err := executeSrvgovWithStderr(t, configPath, "-o", "json", "exec", "pwd")
-	assertAppError(t, err, apperrors.CodeBackendError, 7)
-	if !strings.Contains(stderr, auditWarningText) {
-		t.Fatalf("stderr = %q, want audit warning", stderr)
+	appendCalls := 0
+	f := &cliFlags{
+		Output:          "table",
+		trustedOperator: "tester@localhost",
+		mutationAudit: &mutationAuditRuntime{
+			appendEventWithResult: func(string, srvgovaudit.Event, coreaudit.Options) (coreaudit.AppendResult, error) {
+				appendCalls++
+				if appendCalls == 1 {
+					return coreaudit.AppendResult{State: coreaudit.AppendCommitCommitted}, nil
+				}
+				return coreaudit.AppendResult{State: coreaudit.AppendCommitNotCommitted}, errors.New("injected outcome failure")
+			},
+			now:    func() time.Time { return time.Unix(1, 0).UTC() },
+			random: bytes.NewReader(make([]byte, 16)),
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	root := newRootCmdWith(f)
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"--config", configPath, "-o", "json", "exec", "pwd"})
+	err := root.Execute()
+	assertAppError(t, err, apperrors.CodeLocalIOError, 6)
+	if runner.calls != 1 {
+		t.Fatalf("runner calls = %d, want 1", runner.calls)
+	}
+	if appendCalls != 2 {
+		t.Fatalf("audit append calls = %d, want intent and outcome", appendCalls)
+	}
+	if stdout.Len() != 0 || strings.Contains(stderr.String(), "must-not-be-released") ||
+		strings.Contains(stderr.String(), "pinned SSH host key") {
+		t.Fatalf("read result was released: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 }
 
@@ -104,7 +185,7 @@ func TestFileWriteAuditIntentFailureBlocksMutation(t *testing.T) {
 	}
 }
 
-func TestAuditDefaultPathFailureWarnsWithoutChangingSuccess(t *testing.T) {
+func TestAuditDefaultPathFailureReturnsLocalIO(t *testing.T) {
 	t.Setenv("HOME", "")
 	t.Setenv("USERPROFILE", "")
 	t.Setenv("HOMEDRIVE", "")
@@ -115,11 +196,9 @@ func TestAuditDefaultPathFailureWarnsWithoutChangingSuccess(t *testing.T) {
 		"-o", "json",
 		"audit", "query", "--path", filepath.Join(t.TempDir(), "missing.log"),
 	)
-	if err != nil {
-		t.Fatalf("audit query error = %v", err)
-	}
-	if !strings.Contains(stderr, auditWarningText) {
-		t.Fatalf("stderr = %q, want DefaultPath audit warning", stderr)
+	assertAppError(t, err, apperrors.CodeLocalIOError, 6)
+	if strings.Contains(stderr, auditWarningText) {
+		t.Fatalf("stderr = %q, required audit failure must be returned", stderr)
 	}
 }
 

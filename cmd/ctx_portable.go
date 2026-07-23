@@ -12,6 +12,7 @@ import (
 
 	"github.com/JiangHe12/opskit-core/v2/apperrors"
 	"github.com/JiangHe12/opskit-core/v2/credstore"
+	"github.com/JiangHe12/opskit-core/v2/safety"
 
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovaudit"
 	"github.com/JiangHe12/srvgov-cli/internal/srvgovctx"
@@ -60,8 +61,8 @@ func ctxExportCmd(f *cliFlags) *cobra.Command {
 		Use:   "export <name>",
 		Short: "Export a portable context document",
 		Args:  requireExactArgs("ctx export"),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return runCtxExport(f, args[0], opts)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runCtxExport(cmd, f, args[0], opts)
 		},
 	}
 	command.Flags().BoolVar(&opts.includeCredentials, "include-credentials", false, "Deprecated; plaintext credential export is disabled")
@@ -86,17 +87,37 @@ func ctxImportCmd(f *cliFlags) *cobra.Command {
 	return command
 }
 
-func runCtxExport(f *cliFlags, name string, opts ctxExportOptions) error {
-	cfg, err := srvgovctx.Load()
+func runCtxExport(cmd *cobra.Command, f *cliFlags, name string, opts ctxExportOptions) error {
+	if opts.includeCredentials {
+		return prepareContextForExport(&srvgovctx.Context{}, true)
+	}
+	auditHandle, err := beginRequiredLocalReadAudit(
+		f,
+		name,
+		name,
+		string(srvgovaudit.EventTypeContextExport),
+		srvgovaudit.EventTypeContextExport,
+	)
 	if err != nil {
 		return err
 	}
+	cfg, err := srvgovctx.Load()
+	if err != nil {
+		return finishRequiredLocalReadAudit(auditHandle, err)
+	}
 	item, ok := cfg.Contexts[name]
 	if !ok {
-		return apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("context %q not found", name), nil)
+		return finishRequiredLocalReadAudit(
+			auditHandle,
+			apperrors.New(apperrors.CodeUsageError, fmt.Sprintf("context %q not found", name), nil),
+		)
+	}
+	auditHandle.item = item
+	if err := authorizeContextExport(cmd, f, name, item); err != nil {
+		return finishRequiredLocalReadAudit(auditHandle, err)
 	}
 	if err := prepareContextForExport(&item, opts.includeCredentials); err != nil {
-		return err
+		return finishRequiredLocalReadAudit(auditHandle, err)
 	}
 	data, err := yaml.Marshal(contextExportDocument{
 		APIVersion: ctxExportAPIVersion,
@@ -104,7 +125,13 @@ func runCtxExport(f *cliFlags, name string, opts ctxExportOptions) error {
 		Context:    item,
 	})
 	if err != nil {
-		return apperrors.New(apperrors.CodeLocalIOError, "failed to marshal context export", err)
+		return finishRequiredLocalReadAudit(
+			auditHandle,
+			apperrors.New(apperrors.CodeLocalIOError, "failed to marshal context export", err),
+		)
+	}
+	if err := finishRequiredLocalReadAudit(auditHandle, nil); err != nil {
+		return err
 	}
 	out := f.Out
 	if out == nil {
@@ -113,8 +140,36 @@ func runCtxExport(f *cliFlags, name string, opts ctxExportOptions) error {
 	if _, err := out.Write(data); err != nil {
 		return apperrors.New(apperrors.CodeLocalIOError, "failed to write context export", err)
 	}
-	emitAudit(f, contextAuditEvent(f, srvgovaudit.EventTypeContextExport, name, item), nil)
 	return nil
+}
+
+func authorizeContextExport(
+	cmd *cobra.Command,
+	f *cliFlags,
+	name string,
+	item srvgovctx.Context,
+) error {
+	operator, err := trustedOperator(f)
+	if err != nil {
+		return err
+	}
+	risk := safety.EffectiveRisk(safety.R0, safety.ContextMeta{
+		Name:          name,
+		Env:           item.Env,
+		Protected:     item.Protected,
+		TicketPattern: item.TicketPattern,
+		Roles:         item.Roles,
+	})
+	return safety.Authorize(risk, safety.Options{
+		Yes:            f.Yes,
+		NonInteractive: f.NonInteractive,
+		Ticket:         f.Ticket,
+		TicketPattern:  item.TicketPattern,
+		Stdin:          cmd.InOrStdin(),
+		Stdout:         cmd.OutOrStdout(),
+		Roles:          item.Roles,
+		Operator:       operator,
+	})
 }
 
 func prepareContextForExport(item *srvgovctx.Context, includeCredentials bool) error {
@@ -294,25 +349,4 @@ func contextImportName(original, rename string) (string, error) {
 
 func isLiteralCredential(value string) bool {
 	return value != "" && !credstore.ParseRef(value).IsRef
-}
-
-func contextAuditEvent(f *cliFlags, eventType srvgovaudit.EventType, name string, item srvgovctx.Context) srvgovaudit.Event {
-	risk := "R0"
-	if eventType != srvgovaudit.EventTypeContextExport {
-		risk = "R3"
-	}
-	return srvgovaudit.Event{
-		EventType: eventType,
-		Operator:  currentOperator(f),
-		Context: srvgovaudit.Context{
-			Name:      name,
-			Env:       item.Env,
-			Protected: item.Protected,
-		},
-		Ticket:   f.Ticket,
-		Target:   srvgovaudit.Target{Host: name},
-		Command:  string(eventType),
-		RiskTier: risk,
-		Status:   srvgovaudit.StatusSucceeded,
-	}
 }
